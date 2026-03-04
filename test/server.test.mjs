@@ -271,7 +271,7 @@ describe("server integration", () => {
     deleteTurn(key);
   });
 
-  it("POST /speech-wait with pending turn + poll=2 → second filler phrase + Redirect (no Pause)", async () => {
+  it("POST /speech-wait with pending turn + poll=2 → silent Pause + Redirect (filler exhausted)", async () => {
     const callSid = "CA-sw-filler2";
     const key = `${callSid}:t1`;
     createPendingTurn({ key, callSid, from: "+15550001111", said: "waiting" });
@@ -282,15 +282,15 @@ describe("server integration", () => {
       port
     );
     assert.strictEqual(res.status, 200);
-    assert.match(res.body, /<Say/);
-    assert.doesNotMatch(res.body, /<Pause/);
+    assert.match(res.body, /<Pause/);
+    assert.doesNotMatch(res.body, /<Say/);
     assert.match(res.body, /speech-wait/);
     assert.match(res.body, /poll=3/);
 
     deleteTurn(key);
   });
 
-  it("POST /speech-wait with pending turn + poll=3 → silent Pause + Redirect (filler exhausted)", async () => {
+  it("POST /speech-wait with pending turn + poll=3 → silent Pause + Redirect (continued polling)", async () => {
     const callSid = "CA-sw-filler3";
     const key = `${callSid}:t1`;
     createPendingTurn({ key, callSid, from: "+15550001111", said: "waiting" });

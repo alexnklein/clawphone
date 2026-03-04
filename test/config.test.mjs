@@ -49,9 +49,9 @@ describe("config", () => {
       assert.ok(RATE_LIMIT_WINDOW_MS > 0);
     });
 
-    it("has SPEECH_WAIT_PAUSE_SECONDS defaulting to 1", () => {
+    it("has SPEECH_WAIT_PAUSE_SECONDS defaulting to 2", () => {
       assert.strictEqual(typeof SPEECH_WAIT_PAUSE_SECONDS, "number");
-      assert.strictEqual(SPEECH_WAIT_PAUSE_SECONDS, 1);
+      assert.strictEqual(SPEECH_WAIT_PAUSE_SECONDS, 2);
     });
 
     it("has TWILIO_STT_MODEL defaulting to phone_call", () => {
@@ -61,9 +61,9 @@ describe("config", () => {
   });
 
   describe("fromPluginConfig — SPEECH_WAIT_PAUSE_SECONDS", () => {
-    it("defaults to 1 when not provided", () => {
+    it("defaults to 2 when not provided", () => {
       const cfg = fromPluginConfig({});
-      assert.strictEqual(cfg.SPEECH_WAIT_PAUSE_SECONDS, 1);
+      assert.strictEqual(cfg.SPEECH_WAIT_PAUSE_SECONDS, 2);
     });
 
     it("maps speechWaitPauseSeconds from plugin config", () => {
@@ -129,8 +129,8 @@ describe("config", () => {
       }
     });
 
-    it("has exactly 2 phrases (caps filler at 2 poll cycles)", () => {
-      assert.strictEqual(POLL_FILLER_PHRASES.length, 2);
+    it("has exactly 1 phrase (caps filler at 1 poll cycle)", () => {
+      assert.strictEqual(POLL_FILLER_PHRASES.length, 1);
     });
   });
 
