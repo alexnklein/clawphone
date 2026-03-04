@@ -129,8 +129,8 @@ describe("config", () => {
       }
     });
 
-    it("has exactly 1 phrase (caps filler at 1 poll cycle)", () => {
-      assert.strictEqual(POLL_FILLER_PHRASES.length, 1);
+    it("has exactly 3 phrases", () => {
+      assert.strictEqual(POLL_FILLER_PHRASES.length, 3);
     });
   });
 
