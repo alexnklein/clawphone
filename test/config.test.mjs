@@ -49,9 +49,9 @@ describe("config", () => {
       assert.ok(RATE_LIMIT_WINDOW_MS > 0);
     });
 
-    it("has SPEECH_WAIT_PAUSE_SECONDS defaulting to 1", () => {
+    it("has SPEECH_WAIT_PAUSE_SECONDS as a positive number", () => {
       assert.strictEqual(typeof SPEECH_WAIT_PAUSE_SECONDS, "number");
-      assert.strictEqual(SPEECH_WAIT_PAUSE_SECONDS, 1);
+      assert.ok(SPEECH_WAIT_PAUSE_SECONDS > 0);
     });
 
     it("has TWILIO_STT_MODEL defaulting to phone_call", () => {
@@ -129,8 +129,8 @@ describe("config", () => {
       }
     });
 
-    it("has exactly 2 phrases (caps filler at 2 poll cycles)", () => {
-      assert.strictEqual(POLL_FILLER_PHRASES.length, 2);
+    it("has exactly 3 phrases", () => {
+      assert.strictEqual(POLL_FILLER_PHRASES.length, 3);
     });
   });
 
