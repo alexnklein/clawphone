@@ -2,12 +2,55 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { handleIncomingSms, twimlMessage, normalizeSmsText } from "../lib/sms.mjs";
+import { handleIncomingSms, twimlMessage, twimlMessages, normalizeSmsText } from "../lib/sms.mjs";
 
 test("twimlMessage wraps message in TwiML", () => {
   const xml = twimlMessage("hello");
   assert.match(xml, /^<\?xml version="1\.0" encoding="UTF-8"\?>/);
   assert.match(xml, /<Message>hello<\/Message>/);
+});
+
+test("twimlMessages creates multiple Message elements", () => {
+  const xml = twimlMessages(["part one", "part two", "part three"]);
+  assert.match(xml, /^<\?xml version="1\.0" encoding="UTF-8"\?>/);
+  assert.match(xml, /<Message>part one<\/Message>/);
+  assert.match(xml, /<Message>part two<\/Message>/);
+  assert.match(xml, /<Message>part three<\/Message>/);
+});
+
+test("handleIncomingSms: fast path splits long reply into multiple TwiML messages", async () => {
+  // Build a reply that's >160 chars so it triggers the split
+  const longReply = "A".repeat(80) + " " + "B".repeat(80) + " " + "C".repeat(40);
+  const res = await handleIncomingSms({
+    form: { From: "+15550000001", To: "+15550000002", Body: "hi" },
+    deps: {
+      openclawReply: async () => longReply,
+    },
+    fastTimeoutMs: 500,
+    log: () => {},
+  });
+
+  assert.equal(res.didAck, false);
+  assert.equal(res.startAsync, null);
+  // Should have multiple <Message> elements, not one truncated one
+  const messageCount = (res.twiml.match(/<Message>/g) || []).length;
+  assert.ok(messageCount >= 2, `Expected >=2 Message elements, got ${messageCount}`);
+});
+
+test("handleIncomingSms: fast path short reply still uses single Message", async () => {
+  const res = await handleIncomingSms({
+    form: { From: "+15550000001", To: "+15550000002", Body: "hi" },
+    deps: {
+      openclawReply: async () => "short reply",
+    },
+    fastTimeoutMs: 500,
+    log: () => {},
+  });
+
+  assert.equal(res.didAck, false);
+  const messageCount = (res.twiml.match(/<Message>/g) || []).length;
+  assert.equal(messageCount, 1);
+  assert.match(res.twiml, /short reply/);
 });
 
 test("normalizeSmsText normalizes unicode punctuation and enforces max length", () => {
