@@ -4,31 +4,143 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "port":                  { "type": "number",  "default": 8787 },
-      "allowFrom":             { "type": "array", "items": { "type": "string" }, "default": [] },
-      "twilioAccountSid":      { "type": "string", "default": "" },
-      "twilioAuthToken":       { "type": "string", "default": "" },
-      "twilioSmsFrom":         { "type": "string", "default": "" },
-      "publicBaseUrl":         { "type": "string", "default": "" },
-      "smsFastTimeoutMs":      { "type": "number",  "default": 15000 },
-      "smsMaxChars":           { "type": "number",  "default": 280 },
-      "discordLogChannelId":   { "type": "string",  "default": "" },
-      "openclawSessionId":     { "type": "string",  "default": "phone" },
-      "openclawAgentId":       { "type": "string",  "default": "phone" },
-      "openclawMaxConcurrent": { "type": "number",  "default": 10 },
-      "callerName":            { "type": "string",  "default": "" },
-      "agentName":             { "type": "string",  "default": "" },
-      "greetingText":          { "type": "string",  "default": "You are connected. Say something after the beep." },
-      "rateLimitMax":              { "type": "number",  "default": 20 },
-      "rateLimitWindowMs":         { "type": "number",  "default": 60000 },
-      "speechWaitPauseSeconds":    { "type": "number",  "default": 1 },
-      "twilioSttModel":             { "type": "string",  "default": "phone_call" }
+      "port": {
+        "type": "number",
+        "default": 8787
+      },
+      "allowFrom": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "default": []
+      },
+      "twilioAccountSid": {
+        "type": "string",
+        "default": ""
+      },
+      "twilioAuthToken": {
+        "type": "string",
+        "default": ""
+      },
+      "twilioSmsFrom": {
+        "type": "string",
+        "default": ""
+      },
+      "publicBaseUrl": {
+        "type": "string",
+        "default": ""
+      },
+      "smsFastTimeoutMs": {
+        "type": "number",
+        "default": 15000
+      },
+      "smsMaxChars": {
+        "type": "number",
+        "default": 280
+      },
+      "discordLogChannelId": {
+        "type": "string",
+        "default": ""
+      },
+      "openclawSessionId": {
+        "type": "string",
+        "default": "phone"
+      },
+      "openclawAgentId": {
+        "type": "string",
+        "default": "phone"
+      },
+      "openclawMaxConcurrent": {
+        "type": "number",
+        "default": 10
+      },
+      "callerName": {
+        "type": "string",
+        "default": ""
+      },
+      "agentName": {
+        "type": "string",
+        "default": ""
+      },
+      "greetingText": {
+        "type": "string",
+        "default": "You are connected. Say something after the beep."
+      },
+      "rateLimitMax": {
+        "type": "number",
+        "default": 20
+      },
+      "rateLimitWindowMs": {
+        "type": "number",
+        "default": 60000
+      },
+      "speechWaitPauseSeconds": {
+        "type": "number",
+        "default": 1
+      },
+      "twilioSttModel": {
+        "type": "string",
+        "default": "phone_call"
+      },
+      "sharedSessionKey": {
+        "type": "string",
+        "default": "",
+        "description": "When set, SMS and voice use this session key instead of creating mode-scoped keys. Set to the Telegram session key (e.g. agent:main:main) for cross-channel context sharing."
+      },
+      "callerProfiles": {
+        "type": "object",
+        "default": {},
+        "description": "Per-number caller profiles for tiered access. Keys are E.164 phone numbers. Each value has: tier (owner/household/supplier), name, role (optional), context (optional).",
+        "additionalProperties": {
+          "type": "object",
+          "properties": {
+            "tier": {
+              "type": "string",
+              "enum": ["owner", "household", "supplier"],
+              "default": "household"
+            },
+            "name": {
+              "type": "string",
+              "default": ""
+            },
+            "role": {
+              "type": "string",
+              "default": ""
+            },
+            "context": {
+              "type": "string",
+              "default": ""
+            }
+          },
+          "required": ["tier", "name"]
+        }
+      }
     }
   },
   "uiHints": {
-    "twilioAccountSid":  { "label": "Twilio Account SID" },
-    "twilioAuthToken":   { "label": "Twilio Auth Token", "sensitive": true },
-    "publicBaseUrl":     { "label": "Public Webhook Base URL", "placeholder": "https://twilio.i2dev.com" },
-    "allowFrom":         { "label": "Allowed Phone Numbers (E.164)", "placeholder": "+15551234567" }
+    "twilioAccountSid": {
+      "label": "Twilio Account SID"
+    },
+    "twilioAuthToken": {
+      "label": "Twilio Auth Token",
+      "sensitive": true
+    },
+    "publicBaseUrl": {
+      "label": "Public Webhook Base URL",
+      "placeholder": "https://twilio.i2dev.com"
+    },
+    "allowFrom": {
+      "label": "Allowed Phone Numbers (E.164)",
+      "placeholder": "+15551234567"
+    },
+    "sharedSessionKey": {
+      "label": "Shared Session Key (cross-channel)",
+      "placeholder": "agent:main:main"
+    },
+    "callerProfiles": {
+      "label": "Caller Profiles (tiered access)",
+      "description": "Per-number tier/name/role/context for owner, household, and supplier access levels"
+    }
   }
 }
