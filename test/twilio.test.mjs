@@ -147,22 +147,26 @@ describe("createTwilioClient", () => {
       });
     });
 
-    it("passes empty string for body when body is undefined", async () => {
-      let capturedBody;
+    it("returns empty result without calling API when body is undefined", async () => {
+      let apiCalled = false;
       const client = createTwilioClient({
         accountSid: "ACtest123",
         authToken: "test-token",
         _twilioFactory: makeFakeTwilio({
           createResult: async ({ to, from, body }) => {
-            capturedBody = body;
+            apiCalled = true;
             return { sid: "X", status: "sent", errorCode: null, errorMessage: null, to, from };
           },
         }),
       });
 
-      // @ts-expect-error — intentionally omitting 'body' to test empty-string fallback
-      await client.sendSms({ to: "+15551111111", from: "+15552222222" });
-      assert.strictEqual(capturedBody, "");
+      // @ts-expect-error — intentionally omitting 'body' to test empty-body early return
+      const result = await client.sendSms({ to: "+15551111111", from: "+15552222222" });
+      assert.strictEqual(apiCalled, false, "Should not call Twilio API for empty body");
+      assert.deepStrictEqual(result, {
+        sid: "", status: "", errorCode: null, errorMessage: null,
+        to: "+15551111111", from: "+15552222222",
+      });
     });
 
     it("normalizes all expected fields from the Twilio MessageInstance", async () => {

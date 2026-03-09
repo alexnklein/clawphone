@@ -18,8 +18,9 @@ test("twimlMessages creates multiple Message elements", () => {
   assert.match(xml, /<Message>part three<\/Message>/);
 });
 
-test("handleIncomingSms: fast path splits long reply into multiple TwiML messages", async () => {
-  // Build a reply that's >160 chars so it triggers the split
+test("handleIncomingSms: fast path sends long reply as single TwiML Message (Twilio segments via UDH)", async () => {
+  // Build a reply that's >160 chars — should still be a single <Message>
+  // because Twilio handles concatenated-SMS segmentation natively.
   const longReply = "A".repeat(80) + " " + "B".repeat(80) + " " + "C".repeat(40);
   const res = await handleIncomingSms({
     form: { From: "+15550000001", To: "+15550000002", Body: "hi" },
@@ -32,9 +33,11 @@ test("handleIncomingSms: fast path splits long reply into multiple TwiML message
 
   assert.equal(res.didAck, false);
   assert.equal(res.startAsync, null);
-  // Should have multiple <Message> elements, not one truncated one
+  // Single <Message> — Twilio handles segmentation, guaranteeing delivery order
   const messageCount = (res.twiml.match(/<Message>/g) || []).length;
-  assert.ok(messageCount >= 2, `Expected >=2 Message elements, got ${messageCount}`);
+  assert.equal(messageCount, 1, `Expected exactly 1 Message element, got ${messageCount}`);
+  // Full text should be present in the TwiML
+  assert.ok(res.twiml.includes("A".repeat(80)), "Full reply text should be in the single Message");
 });
 
 test("handleIncomingSms: fast path short reply still uses single Message", async () => {
@@ -53,11 +56,10 @@ test("handleIncomingSms: fast path short reply still uses single Message", async
   assert.match(res.twiml, /short reply/);
 });
 
-test("normalizeSmsText normalizes unicode punctuation and enforces max length", () => {
-  const out = normalizeSmsText("Hi — “there” …", { maxChars: 10 });
-  // punctuation normalized + truncated
-  assert.equal(out.length, 10);
-  assert.match(out, /^Hi - "th/);
+test("normalizeSmsText normalizes unicode punctuation (no truncation)", () => {
+  const out = normalizeSmsText("Hi — “there” …");
+  // em-dash -> -, smart quotes -> ", ellipsis -> ...
+  assert.equal(out, 'Hi - "there" ...');
 });
 
 test("handleIncomingSms: calls deps.discordLog when provided", async () => {
