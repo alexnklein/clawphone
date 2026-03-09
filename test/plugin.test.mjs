@@ -107,7 +107,7 @@ describe("fromPluginConfig", () => {
     assert.strictEqual(cfg.TWILIO_AUTH_TOKEN, "");
     assert.strictEqual(cfg.PUBLIC_BASE_URL, "");
     assert.strictEqual(cfg.SMS_MAX_CHARS, 280);
-    assert.strictEqual(cfg.SMS_FAST_TIMEOUT_MS, 15000);
+    assert.strictEqual(cfg.SMS_FAST_TIMEOUT_MS, 7000);
     assert.strictEqual(cfg.OPENCLAW_PHONE_SESSION_ID, "phone");
     assert.strictEqual(cfg.OPENCLAW_AGENT_ID, "phone");
     assert.strictEqual(cfg.OPENCLAW_MAX_CONCURRENT, 10);

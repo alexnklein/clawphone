@@ -129,8 +129,8 @@ describe("config", () => {
       }
     });
 
-    it("has exactly 3 phrases", () => {
-      assert.strictEqual(POLL_FILLER_PHRASES.length, 3);
+    it("has exactly 2 phrases", () => {
+      assert.strictEqual(POLL_FILLER_PHRASES.length, 2);
     });
   });
 

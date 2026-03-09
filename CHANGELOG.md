@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-03-09
+
+### Added
+- HouseCarl tier-aware routing: caller profiles with `owner`, `trusted`, `known`,
+  `unknown` tiers; per-tier agent/model selection and session isolation
+- `callerProfiles` plugin config field with full OpenClaw UI hints for managing
+  phone-number-to-tier mappings
+
+### Fixed
+- Long fast-path TwiML replies are now split into multiple `<Message>` elements
+  so SMS gateways deliver the full response instead of truncating
+- SMS delivery ordering: stopped manual 160-char chunking in `sendSms()` and
+  TwiML fast-path; Twilio now handles concatenated-SMS segmentation natively
+  via UDH headers, guaranteeing correct segment order on the receiving handset
+
+### Deprecated
+- `splitSmsBody()` — retained for backward compatibility but no longer used in
+  the default send path
+
 ## [1.1.0] - 2026-03-04
 
 ### Added
@@ -72,6 +91,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OpenClaw plugin manifest (`openclaw.plugin.json`) with full `configSchema` and
   `uiHints` for all configuration fields
 
-[Unreleased]: https://github.com/ranacseruet/clawphone/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/ranacseruet/clawphone/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/ranacseruet/clawphone/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/ranacseruet/clawphone/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/ranacseruet/clawphone/releases/tag/v1.0.0

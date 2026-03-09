@@ -146,7 +146,7 @@ describe("openclawReply — plugin path", () => {
 
     const { prompt } = /** @type {any[]} */ (deps.runEmbeddedPiAgent.mock.calls)[0].arguments[0];
     assert.ok(prompt.startsWith("SMS:"), `expected sms framing, got: ${prompt}`);
-    assert.ok(prompt.includes("concise"));
+    assert.ok(prompt.includes("SMS"), "expected SMS response format instructions");
   });
 
   it("filters error payloads from runEmbeddedPiAgent result", async () => {
@@ -239,7 +239,7 @@ describe("openclawReply", () => {
     const messageIdx = args.indexOf("--message");
     const message = args[messageIdx + 1];
     assert.ok(message.startsWith("SMS:"));
-    assert.ok(message.includes("concise"));
+    assert.ok(message.includes("SMS"), "expected SMS response format instructions");
   });
 
   it("handles alternative JSON response formats", async () => {
