@@ -114,6 +114,38 @@ describe("renderBrowserPage — client-side hardening", () => {
     assert.ok(returnIdx < authClearIdx, "catch must return before state.authenticated is cleared");
   });
 
+  it("cancelPendingChat is defined and aborts activeChatController", () => {
+    assert.match(script, /function cancelPendingChat\b/, "cancelPendingChat must be defined");
+    assert.match(script, /activeChatController\.abort\(\)/, "cancelPendingChat must abort the controller");
+    assert.match(script, /state\.pending\s*=\s*false/, "cancelPendingChat must clear state.pending");
+  });
+
+  it("sendMessage creates an AbortController and passes signal to postJson", () => {
+    assert.match(script, /new AbortController\(\)/, "sendMessage must create an AbortController");
+    assert.match(script, /controller\.signal/, "sendMessage must pass the controller signal");
+  });
+
+  it("sendMessage catches AbortError and returns without setting error status", () => {
+    const sendBody = script.match(
+      /async function sendMessage\b[\s\S]*?catch\s*\(err\)\s*\{([\s\S]*?)finally/
+    );
+    assert.ok(sendBody, "sendMessage must have a catch block");
+    assert.match(sendBody[1], /err\.name\s*===\s*'AbortError'/, "catch must check for AbortError");
+  });
+
+  it("logout calls cancelPendingChat before stopRecognition", () => {
+    const logoutBody = script.match(
+      /async function logout\(\)\s*\{([\s\S]*?)(?=\n\s*async function|\n\s*function\s+\w)/
+    );
+    assert.ok(logoutBody, "logout function must exist");
+    const body = logoutBody[1];
+    const cancelIdx = body.indexOf("cancelPendingChat()");
+    const stopIdx = body.indexOf("stopRecognition()");
+    assert.ok(cancelIdx >= 0, "logout must call cancelPendingChat()");
+    assert.ok(stopIdx >= 0, "logout must call stopRecognition()");
+    assert.ok(cancelIdx < stopIdx, "cancelPendingChat must be called before stopRecognition");
+  });
+
   it("logout calls resetConversationUi on success path", () => {
     const logoutBody = script.match(
       /async function logout\(\)\s*\{([\s\S]*?)(?=\n\s*async function|\n\s*function\s+\w)/
@@ -252,6 +284,7 @@ describe("renderBrowserPage — executable logout behavior", () => {
       },
       navigator: { language: "en-US" },
       fetch: fetchImpl,
+      AbortController,
       console,
     });
 
@@ -334,6 +367,81 @@ describe("renderBrowserPage — executable logout behavior", () => {
 
     assert.strictEqual(rec.aborted, true,
       "logout must abort the active SpeechRecognition");
+  });
+
+  it("logout during pending chat clears pending state so re-login can send", async () => {
+    let chatResolve;
+    const chatPromise = new Promise((resolve) => { chatResolve = resolve; });
+    let fetchCallCount = 0;
+
+    const { els, handlers, getState } = bootScript({
+      fetchImpl: async (url, opts) => {
+        fetchCallCount++;
+        if (String(url).includes("/chat")) {
+          // Simulate a hung/deferred reply — only resolves when we say so
+          // But the AbortController signal should abort it
+          if (opts && opts.signal) {
+            return new Promise((resolve, reject) => {
+              chatResolve = resolve;
+              opts.signal.addEventListener("abort", () => {
+                const err = new Error("The operation was aborted.");
+                err.name = "AbortError";
+                reject(err);
+              });
+            });
+          }
+          return chatPromise;
+        }
+        // /logout and /login succeed immediately
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true }),
+        };
+      },
+    });
+
+    const state = getState();
+    assert.strictEqual(state.authenticated, true, "starts authenticated");
+
+    // Put text in message input and send — this starts a hung /chat request
+    els.messageInput.value = "hello from browser";
+    const sendFn = handlers["sendButton:click"];
+    assert.ok(sendFn, "send click handler must be registered");
+    const sendPromise = sendFn();
+
+    // Give the event loop a tick so sendMessage enters the await
+    await new Promise(r => setTimeout(r, 10));
+    assert.strictEqual(getState().pending, true, "state.pending must be true while chat is in flight");
+
+    // Now logout while chat is still pending
+    const logoutFn = handlers["logoutButton:click"];
+    await logoutFn();
+
+    // Wait for sendMessage to finish (it should see the AbortError and return)
+    await sendPromise;
+
+    const afterLogout = getState();
+    assert.strictEqual(afterLogout.pending, false,
+      "state.pending must be false after logout cancels the in-flight chat");
+    assert.strictEqual(afterLogout.authenticated, false,
+      "must be logged out");
+
+    // Now simulate re-login: set authenticated back to true
+    // (In real flow, login() sets state.authenticated = true)
+    // We'll test that a new sendMessage can proceed
+    // Simulate login by calling the login form submit
+    els.accessCode.value = "test-code";
+    // Manually set authenticated to simulate successful login
+    // (the actual login would call postJson which we've already mocked)
+    const loginFn = handlers["loginForm:submit"];
+    assert.ok(loginFn, "login form submit handler must be registered");
+    await loginFn({ preventDefault() {} });
+
+    const afterLogin = getState();
+    assert.strictEqual(afterLogin.authenticated, true, "must be re-authenticated after login");
+    assert.strictEqual(afterLogin.pending, false,
+      "state.pending must still be false after re-login — not wedged");
   });
 
   it("401 on chat aborts active SpeechRecognition", async () => {

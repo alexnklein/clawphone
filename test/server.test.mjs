@@ -211,13 +211,38 @@ describe("server integration", () => {
     assert.match(body.error, /message text is required/i);
   });
 
-  it("POST /browser/logout → clears session cookie", async () => {
+  it("POST /browser/logout without session → 401", async () => {
     const res = await postJsonBrowser("/browser/logout", {}, port);
+    assert.strictEqual(res.status, 401, "logout without session must return 401");
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /unauthorized/i);
+  });
+
+  it("POST /browser/logout with valid session → clears session cookie", async () => {
+    const login = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
+    const cookie = Array.isArray(login.headers["set-cookie"])
+      ? login.headers["set-cookie"][0]
+      : String(login.headers["set-cookie"] || "");
+    const res = await postJsonBrowser("/browser/logout", {}, port, { cookie });
     assert.strictEqual(res.status, 200);
     const body = JSON.parse(res.body);
     assert.strictEqual(body.ok, true);
     // Cookie should be cleared (Max-Age=0)
     assert.match(String(res.headers["set-cookie"]), /Max-Age=0/);
+  });
+
+  it("POST /browser/logout with cross-origin Origin header → 403", async () => {
+    const login = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
+    const cookie = Array.isArray(login.headers["set-cookie"])
+      ? login.headers["set-cookie"][0]
+      : String(login.headers["set-cookie"] || "");
+    const res = await postJsonBrowser("/browser/logout", {}, port, {
+      cookie,
+      origin: "https://evil.example.com",
+    });
+    assert.strictEqual(res.status, 403, "cross-origin logout must be rejected");
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /forbidden/i);
   });
 
   it("POST /browser/chat with unknown session cookie → 401", async () => {
