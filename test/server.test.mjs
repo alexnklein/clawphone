@@ -1408,3 +1408,143 @@ describe("browser session idle-timeout refresh", () => {
     assert.match(page.body, /"authenticated":false/, "idle session must expire after TTL elapses");
   });
 });
+
+// ── Chained-proxy regression tests ─────────────────────────────────────────
+// Verifies that firstForwardedValue() (not lastForwardedValue) is used for
+// X-Forwarded-Proto and X-Forwarded-Host, so CDN→LB→reverse-proxy chains
+// use the outermost (client-facing) value, not the internal hop.
+describe("chained-proxy forwarded-header handling", () => {
+  let proxyServer;
+  let proxyPort;
+
+  before(async () => {
+    const { createServer } = await import("../lib/http-server.mjs");
+    proxyServer = await createServer({
+      ...CAP_BASE_CONFIG,
+      BROWSER_SESSION_MAX_AGE_SECONDS: 300,
+      // No PUBLIC_BASE_URL — force origin reconstruction from forwarded headers
+      PUBLIC_BASE_URL: "",
+    });
+    proxyPort = /** @type {import('node:net').AddressInfo} */ (proxyServer.address()).port;
+  });
+
+  after(async () => {
+    await new Promise((resolve) => proxyServer.close(() => resolve(undefined)));
+  });
+
+  it("GET /browser with chained X-Forwarded-Proto (https,http) → 200 (uses first value)", async () => {
+    // CDN sets https, internal proxy appends http — first value is the real one.
+    const res = await request("GET", "/browser", null, proxyPort, {
+      "x-forwarded-proto": "https, http",
+    });
+    assert.strictEqual(res.status, 200, "chained proto must use first (https) value, not last (http)");
+    assert.match(res.headers["content-type"], /text\/html/);
+  });
+
+  it("GET /browser with chained X-Forwarded-Proto (http,https) → 426 (first value is http)", async () => {
+    // If the outermost proxy says http, it's genuinely not HTTPS.
+    const res = await request("GET", "/browser", null, proxyPort, {
+      "x-forwarded-proto": "http, https",
+    });
+    assert.strictEqual(res.status, 426, "chained proto with http first must be rejected as insecure");
+  });
+
+  it("POST /browser/login with chained X-Forwarded-Host uses first value for origin check", async () => {
+    // CDN sets the real host first, internal proxy appends internal hostname.
+    const res = await request("POST", "/browser/login", { code: "cap-test-code" }, proxyPort, {
+      "content-type": "application/json",
+      "x-forwarded-proto": "https, http",
+      "x-forwarded-host": "real.example.com, internal-lb.local",
+      origin: "https://real.example.com",
+    });
+    assert.strictEqual(res.status, 200, "origin check must match first forwarded host, not last");
+  });
+
+  it("POST /browser/login with chained X-Forwarded-Host rejects origin matching last (internal) value", async () => {
+    const res = await request("POST", "/browser/login", { code: "cap-test-code" }, proxyPort, {
+      "content-type": "application/json",
+      "x-forwarded-proto": "https, http",
+      "x-forwarded-host": "real.example.com, internal-lb.local",
+      origin: "https://internal-lb.local",
+    });
+    assert.strictEqual(res.status, 403, "origin matching only the internal proxy host must be rejected");
+  });
+});
+
+// ── Downstream caller-ID assertion ─────────────────────────────────────────
+// Uses _openclawReplyOverride to intercept the fromNumber actually passed to
+// openclawReply, proving the per-session browser:${sessId} isolation.
+describe("browser chat downstream caller-ID verification", () => {
+  let cidServer;
+  let cidPort;
+  /** @type {string[]} */
+  const seenFromNumbers = [];
+
+  before(async () => {
+    const { createServer } = await import("../lib/http-server.mjs");
+    cidServer = await createServer({
+      ...CAP_BASE_CONFIG,
+      BROWSER_SESSION_MAX_AGE_SECONDS: 300,
+      _openclawReplyOverride: async ({ fromNumber }) => {
+        seenFromNumbers.push(fromNumber);
+        return "[test stub]";
+      },
+    });
+    cidPort = /** @type {import('node:net').AddressInfo} */ (cidServer.address()).port;
+  });
+
+  after(async () => {
+    await new Promise((resolve) => cidServer.close(() => resolve(undefined)));
+  });
+
+  it("two browser sessions pass distinct browser:${sessId} caller IDs to openclawReply", async () => {
+    const cidPostJsonBrowser = (path, body, headers = {}) =>
+      request("POST", path, body, cidPort, {
+        "content-type": "application/json",
+        "x-forwarded-proto": "https",
+        origin: `https://localhost:${cidPort}`,
+        ...headers,
+      });
+
+    // Login session A
+    const loginA = await cidPostJsonBrowser("/browser/login", { code: "cap-test-code" });
+    assert.strictEqual(loginA.status, 200);
+    const cookieA = String(loginA.headers["set-cookie"] || "");
+    const sessIdA = cookieA.match(/clawphone_browser=([^;]+)/)?.[1] || "";
+
+    // Login session B
+    const loginB = await cidPostJsonBrowser("/browser/login", { code: "cap-test-code" });
+    assert.strictEqual(loginB.status, 200);
+    const cookieB = String(loginB.headers["set-cookie"] || "");
+    const sessIdB = cookieB.match(/clawphone_browser=([^;]+)/)?.[1] || "";
+
+    // Clear any prior captured values
+    seenFromNumbers.length = 0;
+
+    // Chat from session A
+    const chatA = await cidPostJsonBrowser("/browser/chat", { text: "hello from A" }, { cookie: cookieA });
+    assert.strictEqual(chatA.status, 200);
+
+    // Chat from session B
+    const chatB = await cidPostJsonBrowser("/browser/chat", { text: "hello from B" }, { cookie: cookieB });
+    assert.strictEqual(chatB.status, 200);
+
+    // Assert the exact fromNumber values the server passed downstream
+    assert.strictEqual(seenFromNumbers.length, 2, "two chat requests must produce two downstream calls");
+    assert.strictEqual(
+      seenFromNumbers[0],
+      `browser:${sessIdA}`,
+      "session A must pass browser:${sessIdA} as fromNumber"
+    );
+    assert.strictEqual(
+      seenFromNumbers[1],
+      `browser:${sessIdB}`,
+      "session B must pass browser:${sessIdB} as fromNumber"
+    );
+    assert.notStrictEqual(
+      seenFromNumbers[0],
+      seenFromNumbers[1],
+      "the two fromNumber values must be distinct"
+    );
+  });
+});
