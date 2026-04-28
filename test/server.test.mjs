@@ -304,7 +304,9 @@ describe("server integration", () => {
     assert.match(res.body, /HouseCarl Voice/);
   });
 
-  it("POST /browser/login on forwarded HTTPS → hardened cookie attributes", async () => {
+  it("POST /browser/login on forwarded HTTPS via trusted proxy → Secure cookie", async () => {
+    // Connection from loopback (trusted proxy) with X-Forwarded-Proto: https
+    // → server trusts the header and sets the Secure flag.
     const res = await postJson(
       "/browser/login",
       { code: "let-me-in" },
@@ -316,7 +318,7 @@ describe("server integration", () => {
     assert.match(cookie, /HttpOnly/, "cookie must be HttpOnly");
     assert.match(cookie, /SameSite=Lax/, "cookie must be SameSite=Lax");
     assert.match(cookie, /Path=\/browser/, "cookie must be scoped to /browser");
-    assert.match(cookie, /Secure/, "cookie must include Secure on HTTPS");
+    assert.match(cookie, /Secure/, "cookie must include Secure on HTTPS via trusted proxy");
   });
 
   it("POST /browser/login on plain HTTP → no Secure flag", async () => {
@@ -337,6 +339,16 @@ describe("server integration", () => {
     const res = await get("/browser", port);
     assert.strictEqual(res.status, 200);
     assert.match(res.body, /authEpoch/, "client state must include authEpoch to guard in-flight requests across logout");
+  });
+
+  it("GET /browser → logout and 401 clear conversation state (resetConversationUi)", async () => {
+    const res = await get("/browser", port);
+    assert.strictEqual(res.status, 200);
+    // resetConversationUi must exist and be called in both logout() and the 401 handler
+    assert.match(res.body, /function resetConversationUi/, "resetConversationUi function must be defined");
+    assert.match(res.body, /transcriptEl\.textContent\s*=\s*''/, "resetConversationUi must clear transcript");
+    assert.match(res.body, /interimEl\.textContent\s*=\s*''/, "resetConversationUi must clear interim text");
+    assert.match(res.body, /messageInput\.value\s*=\s*''/, "resetConversationUi must clear message input");
   });
 
   it("GET /browser → login error feedback element present in HTML", async () => {
@@ -385,9 +397,12 @@ describe("server integration", () => {
     assert.ok(body.error, "JSON error body must include an error field");
   });
 
-  it("POST /browser/login uses X-Forwarded-For for rate limiting (proxy-aware)", async () => {
-    // Send many login attempts from distinct X-Forwarded-For addresses — all should succeed
-    // (if rate limiting used socket.remoteAddress, they'd collide on 127.0.0.1)
+  it("POST /browser/login trusts X-Forwarded-For only from loopback (trusted proxy)", async () => {
+    // Test connections originate from 127.0.0.1 (loopback), which is a trusted
+    // proxy.  When the request comes from a trusted proxy, the server honours
+    // X-Forwarded-For for rate-limit bucketing — distinct forwarded IPs each
+    // get their own bucket.  A non-loopback client sending X-Forwarded-For
+    // would be ignored and fall back to socket.remoteAddress.
     const results = [];
     for (let i = 0; i < 3; i++) {
       const res = await postJson(
@@ -399,10 +414,10 @@ describe("server integration", () => {
       results.push(res.status);
     }
     // All should be 401 (wrong code), NOT 429 (rate limited), because each
-    // has a distinct forwarded IP
+    // has a distinct forwarded IP and the connection is from a trusted proxy
     assert.ok(
       results.every((s) => s === 401),
-      `all attempts from distinct forwarded IPs should get 401, got: ${results}`
+      `all attempts from distinct forwarded IPs via trusted proxy should get 401, got: ${results}`
     );
   });
 
