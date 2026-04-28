@@ -277,7 +277,7 @@ describe("renderBrowserPage — executable logout behavior", () => {
     });
     const els = {};
     for (const id of [
-      "loginCard", "appCard", "loginForm", "accessCode",
+      "loginCard", "appCard", "loginForm", "loginButton", "accessCode",
       "micButton", "sendButton", "logoutButton", "autoSpeak",
       "status", "loginStatus", "transcript", "interim", "messageInput",
     ]) {
