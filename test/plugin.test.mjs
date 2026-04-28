@@ -163,6 +163,24 @@ describe("fromPluginConfig", () => {
     assert.strictEqual(cfg.BROWSER_PATH, "/my-voice");
   });
 
+  it("collapses duplicate slashes in browserPath", () => {
+    const cfg = fromPluginConfig({ browserPath: "//my-voice" });
+    assert.strictEqual(cfg.BROWSER_PATH, "/my-voice");
+  });
+
+  it("collapses internal duplicate slashes in browserPath", () => {
+    const cfg = fromPluginConfig({ browserPath: "/browser//chat" });
+    assert.strictEqual(cfg.BROWSER_PATH, "/browser/chat");
+  });
+
+  it("rejects browserPath that collapses to a reserved route", () => {
+    assert.throws(
+      () => fromPluginConfig({ browserPath: "//voice//" }),
+      /conflicts with a reserved server route/,
+      "//voice// should collapse to /voice and be rejected"
+    );
+  });
+
   it("includes static constants", () => {
     const cfg = fromPluginConfig({});
     assert.strictEqual(cfg.TWILIO_VOICE, "Google.en-US-Chirp3-HD-Charon");

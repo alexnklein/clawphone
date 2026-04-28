@@ -664,6 +664,38 @@ describe("server integration", () => {
     assert.match(body.error, /unsupported content type/i);
   });
 
+  it("POST /browser/logout with form-urlencoded body → 415", async () => {
+    const login = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
+    const cookie = Array.isArray(login.headers["set-cookie"])
+      ? login.headers["set-cookie"][0]
+      : String(login.headers["set-cookie"] || "");
+    const res = await request("POST", "/browser/logout", "", port, {
+      "content-type": "application/x-www-form-urlencoded",
+      origin: `https://localhost:${port}`,
+      ...HTTPS_HEADER,
+      cookie,
+    });
+    assert.strictEqual(res.status, 415, "form-urlencoded must be rejected on logout");
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /unsupported content type/i);
+  });
+
+  it("POST /browser/logout with text/plain body → 415", async () => {
+    const login = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
+    const cookie = Array.isArray(login.headers["set-cookie"])
+      ? login.headers["set-cookie"][0]
+      : String(login.headers["set-cookie"] || "");
+    const res = await request("POST", "/browser/logout", "{}", port, {
+      "content-type": "text/plain",
+      origin: `https://localhost:${port}`,
+      ...HTTPS_HEADER,
+      cookie,
+    });
+    assert.strictEqual(res.status, 415, "text/plain must be rejected on logout");
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /unsupported content type/i);
+  });
+
   // ── /voice ───────────────────────────────────────────────────────────────
 
   it("POST /voice from allowed number → Gather TwiML", async () => {
