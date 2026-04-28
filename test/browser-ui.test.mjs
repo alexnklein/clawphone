@@ -203,8 +203,24 @@ describe("renderBrowserPage — executable logout behavior", () => {
     return { els, handlers };
   }
 
+  /** Minimal SpeechRecognition stub that records lifecycle calls. */
+  class FakeSpeechRecognition {
+    constructor() {
+      this.handlers = {};
+      this.aborted = false;
+      this.started = false;
+      this.continuous = false;
+      this.interimResults = false;
+      this.lang = "";
+    }
+    addEventListener(name, fn) { this.handlers[name] = fn; }
+    start() { this.started = true; this.handlers.start?.(); }
+    stop() { this.handlers.end?.(); }
+    abort() { this.aborted = true; this.handlers.end?.(); }
+  }
+
   /** Boot the inline script inside a vm context and return helpers. */
-  function bootScript({ fetchImpl }) {
+  function bootScript({ fetchImpl, withSpeechRecognition = false }) {
     const html = renderBrowserPage({
       authenticated: true,
       browserPath: "/browser",
@@ -212,6 +228,15 @@ describe("renderBrowserPage — executable logout behavior", () => {
     });
     const script = extractScript(html);
     const { els, handlers } = createMockDom();
+
+    /** @type {FakeSpeechRecognition|null} */
+    let lastRecognition = null;
+    const SpeechRecognitionCtor = withSpeechRecognition
+      ? function () {
+          lastRecognition = new FakeSpeechRecognition();
+          return lastRecognition;
+        }
+      : undefined;
 
     const ctx = vm.createContext({
       document: {
@@ -221,7 +246,10 @@ describe("renderBrowserPage — executable logout behavior", () => {
           appendChild() {},
         }),
       },
-      window: { speechSynthesis: { cancel() {} } },
+      window: {
+        SpeechRecognition: SpeechRecognitionCtor,
+        speechSynthesis: { cancel() {} },
+      },
       navigator: { language: "en-US" },
       fetch: fetchImpl,
       console,
@@ -233,6 +261,7 @@ describe("renderBrowserPage — executable logout behavior", () => {
       els,
       handlers,
       getState: () => vm.runInContext("state", ctx),
+      getRecognition: () => lastRecognition,
     };
   }
 
@@ -278,5 +307,98 @@ describe("renderBrowserPage — executable logout behavior", () => {
       "login card must be visible after logout");
     assert.match(els.loginStatus.textContent, /[Ll]ocked/,
       "login status must show locked confirmation");
+  });
+
+  it("logout aborts active SpeechRecognition", async () => {
+    const { handlers, getRecognition } = bootScript({
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true }),
+      }),
+      withSpeechRecognition: true,
+    });
+
+    // Start the mic so a recognition object is active
+    const micClickFn = handlers["micButton:click"];
+    assert.ok(micClickFn, "mic click handler must be registered");
+    micClickFn();
+
+    const rec = getRecognition();
+    assert.ok(rec, "FakeSpeechRecognition must have been created");
+    assert.strictEqual(rec.started, true, "recognition must have been started");
+
+    // Now logout
+    const logoutFn = handlers["logoutButton:click"];
+    await logoutFn();
+
+    assert.strictEqual(rec.aborted, true,
+      "logout must abort the active SpeechRecognition");
+  });
+
+  it("401 on chat aborts active SpeechRecognition", async () => {
+    let callCount = 0;
+    const { handlers, getRecognition, getState } = bootScript({
+      fetchImpl: async (url) => {
+        callCount++;
+        // First call is /login (from the mic-based sendMessage flow)
+        // Actually, sendMessage calls /chat
+        if (String(url).includes("/chat")) {
+          return {
+            ok: false,
+            status: 401,
+            json: async () => ({ error: "Unauthorized." }),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true }),
+        };
+      },
+      withSpeechRecognition: true,
+    });
+
+    // Start the mic
+    const micClickFn = handlers["micButton:click"];
+    micClickFn();
+    const rec = getRecognition();
+    assert.ok(rec, "recognition must exist");
+
+    // Simulate a chat message (which will get a 401)
+    const sendClickFn = handlers["sendButton:click"];
+    assert.ok(sendClickFn, "send click handler must be registered");
+
+    // We need to set the message input text
+    // sendButton click calls sendMessage(messageInput.value)
+    // The state is authenticated: true from bootScript
+    // But we need text in the input
+    // Let's directly call sendMessage via the send button
+    // Actually, sendMessage checks !trimmed and returns early.
+    // Let me just set the message input value:
+    // We have access to els... but handlers["sendButton:click"] just calls sendMessage(messageInput.value)
+    // We need to get els from bootScript. Let me re-check the destructuring.
+
+    // Actually, the test doesn't have access to els through this destructuring.
+    // Let's just verify that after a 401, recognition is aborted.
+    // The simplest way: trigger recognition result event which calls sendMessage.
+    const resultHandler = rec.handlers.result;
+    if (resultHandler) {
+      // Simulate a final speech result
+      resultHandler({
+        resultIndex: 0,
+        results: {
+          length: 1,
+          0: { 0: { transcript: "hello" }, isFinal: true, length: 1 },
+        },
+      });
+      // Wait for the async sendMessage to complete
+      await new Promise(r => setTimeout(r, 50));
+    }
+
+    assert.strictEqual(rec.aborted, true,
+      "401 response must abort the active SpeechRecognition");
+    assert.strictEqual(getState().authenticated, false,
+      "401 must clear authenticated state");
   });
 });

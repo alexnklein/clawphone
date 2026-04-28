@@ -135,6 +135,34 @@ describe("fromPluginConfig", () => {
     assert.strictEqual(typeof cfg.BROWSER_ACCESS_CODE, "string");
   });
 
+  it("rejects browserPath that shadows a reserved route", () => {
+    for (const reserved of ["/health", "/voice", "/speech", "/speech-wait", "/sms", "/status", "/healthz"]) {
+      assert.throws(
+        () => fromPluginConfig({ browserPath: reserved }),
+        /conflicts with a reserved server route/,
+        `browserPath="${reserved}" must be rejected`
+      );
+    }
+  });
+
+  it("rejects browserPath with invalid characters", () => {
+    assert.throws(
+      () => fromPluginConfig({ browserPath: "/bad path" }),
+      /Invalid browserPath/,
+      "spaces must be rejected"
+    );
+    assert.throws(
+      () => fromPluginConfig({ browserPath: "/bad<path" }),
+      /Invalid browserPath/,
+      "angle brackets must be rejected"
+    );
+  });
+
+  it("accepts valid custom browserPath", () => {
+    const cfg = fromPluginConfig({ browserPath: "/my-voice" });
+    assert.strictEqual(cfg.BROWSER_PATH, "/my-voice");
+  });
+
   it("includes static constants", () => {
     const cfg = fromPluginConfig({});
     assert.strictEqual(cfg.TWILIO_VOICE, "Google.en-US-Chirp3-HD-Charon");
