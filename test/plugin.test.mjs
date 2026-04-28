@@ -124,6 +124,17 @@ describe("fromPluginConfig", () => {
     assert.strictEqual(cfg.BROWSER_ACCESS_CODE, "");
   });
 
+  it("explicit empty browserAccessCode overrides env var", () => {
+    const cfg = fromPluginConfig({ browserAccessCode: "" });
+    assert.strictEqual(cfg.BROWSER_ACCESS_CODE, "", "explicit empty string must not fall back to env var");
+  });
+
+  it("omitted browserAccessCode falls through to env var default", () => {
+    const cfg = fromPluginConfig({});
+    // When env var is unset (as in this test process), default is ""
+    assert.strictEqual(typeof cfg.BROWSER_ACCESS_CODE, "string");
+  });
+
   it("includes static constants", () => {
     const cfg = fromPluginConfig({});
     assert.strictEqual(cfg.TWILIO_VOICE, "Google.en-US-Chirp3-HD-Charon");

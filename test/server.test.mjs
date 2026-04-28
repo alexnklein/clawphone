@@ -248,6 +248,34 @@ describe("server integration", () => {
     assert.strictEqual(chatAfter.status, 401, "old cookie must be rejected after logout");
   });
 
+  it("POST /browser/login re-login invalidates previous session", async () => {
+    // First login
+    const login1 = await postJson("/browser/login", { code: "let-me-in" }, port);
+    assert.strictEqual(login1.status, 200);
+    const cookie1 = Array.isArray(login1.headers["set-cookie"])
+      ? login1.headers["set-cookie"][0]
+      : String(login1.headers["set-cookie"] || "");
+
+    // Verify first session works
+    const chat1 = await postJson("/browser/chat", { text: "hi" }, port, { cookie: cookie1 });
+    assert.strictEqual(chat1.status, 200);
+
+    // Re-login with the same cookie present (simulates browser re-login)
+    const login2 = await postJson("/browser/login", { code: "let-me-in" }, port, { cookie: cookie1 });
+    assert.strictEqual(login2.status, 200);
+    const cookie2 = Array.isArray(login2.headers["set-cookie"])
+      ? login2.headers["set-cookie"][0]
+      : String(login2.headers["set-cookie"] || "");
+
+    // New session should work
+    const chat2 = await postJson("/browser/chat", { text: "hi" }, port, { cookie: cookie2 });
+    assert.strictEqual(chat2.status, 200);
+
+    // Old session must be revoked
+    const chatOld = await postJson("/browser/chat", { text: "hi" }, port, { cookie: cookie1 });
+    assert.strictEqual(chatOld.status, 401, "previous session must be revoked after re-login");
+  });
+
   it("GET /browser/ (trailing slash) → same HTML shell as /browser", async () => {
     const res = await get("/browser/", port);
     assert.strictEqual(res.status, 200);
