@@ -101,6 +101,13 @@ const get = (path, port) => request("GET", path, null, port);
 const postJson = (path, body, port, headers = {}) =>
   request("POST", path, body, port, { "content-type": "application/json", ...headers });
 
+// Browser routes require HTTPS.  Test connections come from loopback (trusted
+// proxy), so we simulate HTTPS by sending x-forwarded-proto: https.
+const HTTPS_HEADER = { "x-forwarded-proto": "https" };
+const getBrowser = (path, port) => request("GET", path, null, port, HTTPS_HEADER);
+const postJsonBrowser = (path, body, port, headers = {}) =>
+  request("POST", path, body, port, { "content-type": "application/json", ...HTTPS_HEADER, ...headers });
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe("server integration", () => {
@@ -153,21 +160,21 @@ describe("server integration", () => {
   // ── /browser ─────────────────────────────────────────────────────────────
 
   it("GET /browser → HTML shell", async () => {
-    const res = await get("/browser", port);
+    const res = await getBrowser("/browser", port);
     assert.strictEqual(res.status, 200);
     assert.match(res.headers["content-type"], /text\/html/);
     assert.match(res.body, /HouseCarl Voice/);
   });
 
   it("POST /browser/login with wrong code → 401", async () => {
-    const res = await postJson("/browser/login", { code: "wrong" }, port);
+    const res = await postJsonBrowser("/browser/login", { code: "wrong" }, port);
     assert.strictEqual(res.status, 401);
     const body = JSON.parse(res.body);
     assert.match(body.error, /invalid access code/i);
   });
 
   it("POST /browser/login with correct code → session cookie", async () => {
-    const res = await postJson("/browser/login", { code: "let-me-in" }, port);
+    const res = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
     assert.strictEqual(res.status, 200);
     const body = JSON.parse(res.body);
     assert.strictEqual(body.ok, true);
@@ -175,18 +182,18 @@ describe("server integration", () => {
   });
 
   it("POST /browser/chat without cookie → 401", async () => {
-    const res = await postJson("/browser/chat", { text: "hello" }, port);
+    const res = await postJsonBrowser("/browser/chat", { text: "hello" }, port);
     assert.strictEqual(res.status, 401);
     const body = JSON.parse(res.body);
     assert.match(body.error, /unauthorized/i);
   });
 
   it("POST /browser/chat with cookie → JSON reply", async () => {
-    const login = await postJson("/browser/login", { code: "let-me-in" }, port);
+    const login = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
     const cookie = Array.isArray(login.headers["set-cookie"])
       ? login.headers["set-cookie"][0]
       : String(login.headers["set-cookie"] || "");
-    const res = await postJson("/browser/chat", { text: "hello from browser" }, port, { cookie });
+    const res = await postJsonBrowser("/browser/chat", { text: "hello from browser" }, port, { cookie });
     assert.strictEqual(res.status, 200);
     const body = JSON.parse(res.body);
     assert.strictEqual(body.ok, true);
@@ -194,18 +201,18 @@ describe("server integration", () => {
   });
 
   it("POST /browser/chat with empty text → 400", async () => {
-    const login = await postJson("/browser/login", { code: "let-me-in" }, port);
+    const login = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
     const cookie = Array.isArray(login.headers["set-cookie"])
       ? login.headers["set-cookie"][0]
       : String(login.headers["set-cookie"] || "");
-    const res = await postJson("/browser/chat", { text: "   " }, port, { cookie });
+    const res = await postJsonBrowser("/browser/chat", { text: "   " }, port, { cookie });
     assert.strictEqual(res.status, 400);
     const body = JSON.parse(res.body);
     assert.match(body.error, /message text is required/i);
   });
 
   it("POST /browser/logout → clears session cookie", async () => {
-    const res = await postJson("/browser/logout", {}, port);
+    const res = await postJsonBrowser("/browser/logout", {}, port);
     assert.strictEqual(res.status, 200);
     const body = JSON.parse(res.body);
     assert.strictEqual(body.ok, true);
@@ -215,90 +222,90 @@ describe("server integration", () => {
 
   it("POST /browser/chat with unknown session cookie → 401", async () => {
     // A random session ID that was never issued by the server
-    const res = await postJson("/browser/chat", { text: "hello" }, port, { cookie: "clawphone_browser=bogus-session-id" });
+    const res = await postJsonBrowser("/browser/chat", { text: "hello" }, port, { cookie: "clawphone_browser=bogus-session-id" });
     assert.strictEqual(res.status, 401);
   });
 
   it("POST /browser/chat with malformed cookie → 401", async () => {
-    const res = await postJson("/browser/chat", { text: "hello" }, port, { cookie: "clawphone_browser=garbage" });
+    const res = await postJsonBrowser("/browser/chat", { text: "hello" }, port, { cookie: "clawphone_browser=garbage" });
     assert.strictEqual(res.status, 401);
   });
 
   it("POST /browser/chat with invalid percent-encoded cookie → 401 (not crash)", async () => {
-    const res = await postJson("/browser/chat", { text: "hello" }, port, { cookie: "clawphone_browser=%E0%A4%A" });
+    const res = await postJsonBrowser("/browser/chat", { text: "hello" }, port, { cookie: "clawphone_browser=%E0%A4%A" });
     assert.strictEqual(res.status, 401);
   });
 
   it("POST /browser/logout revokes session — old cookie rejected", async () => {
     // Login to get a valid session cookie
-    const login = await postJson("/browser/login", { code: "let-me-in" }, port);
+    const login = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
     const cookie = Array.isArray(login.headers["set-cookie"])
       ? login.headers["set-cookie"][0]
       : String(login.headers["set-cookie"] || "");
 
     // Verify the cookie works before logout
-    const chatBefore = await postJson("/browser/chat", { text: "hi" }, port, { cookie });
+    const chatBefore = await postJsonBrowser("/browser/chat", { text: "hi" }, port, { cookie });
     assert.strictEqual(chatBefore.status, 200);
 
     // Logout (server-side revocation)
-    await postJson("/browser/logout", {}, port, { cookie });
+    await postJsonBrowser("/browser/logout", {}, port, { cookie });
 
     // Replay the old cookie → must be rejected
-    const chatAfter = await postJson("/browser/chat", { text: "hi" }, port, { cookie });
+    const chatAfter = await postJsonBrowser("/browser/chat", { text: "hi" }, port, { cookie });
     assert.strictEqual(chatAfter.status, 401, "old cookie must be rejected after logout");
   });
 
   it("POST /browser/login re-login invalidates previous session", async () => {
     // First login
-    const login1 = await postJson("/browser/login", { code: "let-me-in" }, port);
+    const login1 = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
     assert.strictEqual(login1.status, 200);
     const cookie1 = Array.isArray(login1.headers["set-cookie"])
       ? login1.headers["set-cookie"][0]
       : String(login1.headers["set-cookie"] || "");
 
     // Verify first session works
-    const chat1 = await postJson("/browser/chat", { text: "hi" }, port, { cookie: cookie1 });
+    const chat1 = await postJsonBrowser("/browser/chat", { text: "hi" }, port, { cookie: cookie1 });
     assert.strictEqual(chat1.status, 200);
 
     // Re-login with the same cookie present (simulates browser re-login)
-    const login2 = await postJson("/browser/login", { code: "let-me-in" }, port, { cookie: cookie1 });
+    const login2 = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port, { cookie: cookie1 });
     assert.strictEqual(login2.status, 200);
     const cookie2 = Array.isArray(login2.headers["set-cookie"])
       ? login2.headers["set-cookie"][0]
       : String(login2.headers["set-cookie"] || "");
 
     // New session should work
-    const chat2 = await postJson("/browser/chat", { text: "hi" }, port, { cookie: cookie2 });
+    const chat2 = await postJsonBrowser("/browser/chat", { text: "hi" }, port, { cookie: cookie2 });
     assert.strictEqual(chat2.status, 200);
 
     // Old session must be revoked
-    const chatOld = await postJson("/browser/chat", { text: "hi" }, port, { cookie: cookie1 });
+    const chatOld = await postJsonBrowser("/browser/chat", { text: "hi" }, port, { cookie: cookie1 });
     assert.strictEqual(chatOld.status, 401, "previous session must be revoked after re-login");
   });
 
   it("POST /browser/login with wrong code does not revoke existing session", async () => {
     // Login successfully first
-    const login = await postJson("/browser/login", { code: "let-me-in" }, port);
+    const login = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
     assert.strictEqual(login.status, 200);
     const cookie = Array.isArray(login.headers["set-cookie"])
       ? login.headers["set-cookie"][0]
       : String(login.headers["set-cookie"] || "");
 
     // Verify the session works
-    const chatBefore = await postJson("/browser/chat", { text: "hi" }, port, { cookie });
+    const chatBefore = await postJsonBrowser("/browser/chat", { text: "hi" }, port, { cookie });
     assert.strictEqual(chatBefore.status, 200);
 
     // Attempt re-login with wrong code (sends the existing cookie along)
-    const badLogin = await postJson("/browser/login", { code: "wrong" }, port, { cookie });
+    const badLogin = await postJsonBrowser("/browser/login", { code: "wrong" }, port, { cookie });
     assert.strictEqual(badLogin.status, 401);
 
     // Original session must still be valid
-    const chatAfter = await postJson("/browser/chat", { text: "hi" }, port, { cookie });
+    const chatAfter = await postJsonBrowser("/browser/chat", { text: "hi" }, port, { cookie });
     assert.strictEqual(chatAfter.status, 200, "existing session must survive a failed re-login attempt");
   });
 
   it("GET /browser/ (trailing slash) → same HTML shell as /browser", async () => {
-    const res = await get("/browser/", port);
+    const res = await getBrowser("/browser/", port);
     assert.strictEqual(res.status, 200);
     assert.match(res.headers["content-type"], /text\/html/);
     assert.match(res.body, /HouseCarl Voice/);
@@ -307,22 +314,7 @@ describe("server integration", () => {
   it("POST /browser/login on forwarded HTTPS via trusted proxy → Secure cookie", async () => {
     // Connection from loopback (trusted proxy) with X-Forwarded-Proto: https
     // → server trusts the header and sets the Secure flag.
-    const res = await postJson(
-      "/browser/login",
-      { code: "let-me-in" },
-      port,
-      { "x-forwarded-proto": "https" }
-    );
-    assert.strictEqual(res.status, 200);
-    const cookie = String(res.headers["set-cookie"] || "");
-    assert.match(cookie, /HttpOnly/, "cookie must be HttpOnly");
-    assert.match(cookie, /SameSite=Lax/, "cookie must be SameSite=Lax");
-    assert.match(cookie, /Path=\/browser/, "cookie must be scoped to /browser");
-    assert.match(cookie, /Secure/, "cookie must include Secure on HTTPS via trusted proxy");
-  });
-
-  it("POST /browser/login on plain HTTP → no Secure flag", async () => {
-    const res = await postJson(
+    const res = await postJsonBrowser(
       "/browser/login",
       { code: "let-me-in" },
       port
@@ -332,32 +324,40 @@ describe("server integration", () => {
     assert.match(cookie, /HttpOnly/, "cookie must be HttpOnly");
     assert.match(cookie, /SameSite=Lax/, "cookie must be SameSite=Lax");
     assert.match(cookie, /Path=\/browser/, "cookie must be scoped to /browser");
-    assert.doesNotMatch(cookie, /Secure/, "cookie must NOT include Secure on plain HTTP");
+    assert.match(cookie, /Secure/, "cookie must include Secure on HTTPS via trusted proxy");
+  });
+
+  it("browser routes on plain HTTP (no x-forwarded-proto) → 426", async () => {
+    // Without x-forwarded-proto: https, browser routes must reject with 426
+    const getRes = await get("/browser", port);
+    assert.strictEqual(getRes.status, 426, "GET /browser on plain HTTP must return 426");
+    const postRes = await postJson("/browser/login", { code: "let-me-in" }, port);
+    assert.strictEqual(postRes.status, 426, "POST /browser/login on plain HTTP must return 426");
   });
 
   it("POST /browser/chat after logout → 401 (session fully revoked)", async () => {
     // Full login→chat→logout→chat flow proving logout kills the server session
-    const login = await postJson("/browser/login", { code: "let-me-in" }, port);
+    const login = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
     assert.strictEqual(login.status, 200);
     const cookie = Array.isArray(login.headers["set-cookie"])
       ? login.headers["set-cookie"][0]
       : String(login.headers["set-cookie"] || "");
 
     // Chat works before logout
-    const chatOk = await postJson("/browser/chat", { text: "hi" }, port, { cookie });
+    const chatOk = await postJsonBrowser("/browser/chat", { text: "hi" }, port, { cookie });
     assert.strictEqual(chatOk.status, 200);
 
     // Logout
-    const logoutRes = await postJson("/browser/logout", {}, port, { cookie });
+    const logoutRes = await postJsonBrowser("/browser/logout", {}, port, { cookie });
     assert.strictEqual(logoutRes.status, 200);
 
     // Late chat with the same cookie must be rejected
-    const chatAfter = await postJson("/browser/chat", { text: "post-logout" }, port, { cookie });
+    const chatAfter = await postJsonBrowser("/browser/chat", { text: "post-logout" }, port, { cookie });
     assert.strictEqual(chatAfter.status, 401, "chat after logout must be rejected");
   });
 
   it("GET /browser → security headers present", async () => {
-    const res = await get("/browser", port);
+    const res = await getBrowser("/browser", port);
     assert.strictEqual(res.status, 200);
     assert.strictEqual(res.headers["x-frame-options"], "DENY");
     assert.strictEqual(res.headers["x-content-type-options"], "nosniff");
@@ -370,6 +370,7 @@ describe("server integration", () => {
     const oversized = '{"code":"' + "a".repeat(70_000) + '"}';
     const res = await request("POST", "/browser/login", oversized, port, {
       "content-type": "application/json",
+      ...HTTPS_HEADER,
     });
     // readBody rejects oversized payloads; response must still be JSON
     assert.strictEqual(res.status, 413);
@@ -380,13 +381,14 @@ describe("server integration", () => {
 
   it("POST /browser/chat with oversized body → JSON error (not text/plain)", async () => {
     // Login first to get a valid session
-    const login = await postJson("/browser/login", { code: "let-me-in" }, port);
+    const login = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
     const cookie = Array.isArray(login.headers["set-cookie"])
       ? login.headers["set-cookie"][0]
       : String(login.headers["set-cookie"] || "");
     const oversized = '{"text":"' + "a".repeat(70_000) + '"}';
     const res = await request("POST", "/browser/chat", oversized, port, {
       "content-type": "application/json",
+      ...HTTPS_HEADER,
       cookie,
     });
     assert.strictEqual(res.status, 413);
@@ -403,7 +405,7 @@ describe("server integration", () => {
     //
     // This test verifies the default (no forwarded header) path works and
     // returns 401 (wrong code) — NOT 429 — within the normal rate budget.
-    const res = await postJson(
+    const res = await postJsonBrowser(
       "/browser/login",
       { code: "wrong-code" },
       port
@@ -418,6 +420,7 @@ describe("server integration", () => {
   it("POST /browser/login with null JSON body → 400", async () => {
     const res = await request("POST", "/browser/login", "null", port, {
       "content-type": "application/json",
+      ...HTTPS_HEADER,
     });
     assert.strictEqual(res.status, 400);
     const body = JSON.parse(res.body);
@@ -427,6 +430,7 @@ describe("server integration", () => {
   it("POST /browser/login with JSON array body → 400", async () => {
     const res = await request("POST", "/browser/login", '[1,2,3]', port, {
       "content-type": "application/json",
+      ...HTTPS_HEADER,
     });
     assert.strictEqual(res.status, 400);
     const body = JSON.parse(res.body);
@@ -436,6 +440,7 @@ describe("server integration", () => {
   it("POST /browser/login with JSON string body → 400", async () => {
     const res = await request("POST", "/browser/login", '"hello"', port, {
       "content-type": "application/json",
+      ...HTTPS_HEADER,
     });
     assert.strictEqual(res.status, 400);
     const body = JSON.parse(res.body);
@@ -446,17 +451,19 @@ describe("server integration", () => {
     // Without a session the auth check fires first
     const res = await request("POST", "/browser/chat", "null", port, {
       "content-type": "application/json",
+      ...HTTPS_HEADER,
     });
     assert.strictEqual(res.status, 401);
   });
 
   it("POST /browser/chat with null JSON body + valid session → 400", async () => {
-    const login = await postJson("/browser/login", { code: "let-me-in" }, port);
+    const login = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
     const cookie = Array.isArray(login.headers["set-cookie"])
       ? login.headers["set-cookie"][0]
       : String(login.headers["set-cookie"] || "");
     const res = await request("POST", "/browser/chat", "null", port, {
       "content-type": "application/json",
+      ...HTTPS_HEADER,
       cookie,
     });
     assert.strictEqual(res.status, 400);
