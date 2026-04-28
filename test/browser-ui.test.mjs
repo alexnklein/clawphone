@@ -63,18 +63,20 @@ describe("renderBrowserPage — client-side hardening", () => {
 
   // ── sendMessage auth guard ─────────────────────────────────────────
 
-  it("sendMessage guards on state.authenticated", () => {
+  it("sendMessage guards on state.authenticated and state.authTransition", () => {
     const sendBody = script.match(
       /async function sendMessage\b[\s\S]*?if\s*\(([^)]+)\)\s*return;/
     );
     assert.ok(sendBody, "sendMessage must have an early-return guard");
     assert.match(sendBody[1], /!state\.authenticated/, "sendMessage guard must check !state.authenticated");
+    assert.match(sendBody[1], /state\.authTransition/, "sendMessage guard must check state.authTransition");
   });
 
   // ── authEpoch ──────────────────────────────────────────────────────
 
-  it("state initializer includes authEpoch", () => {
+  it("state initializer includes authEpoch and authTransition", () => {
     assert.match(script, /authEpoch:\s*0/, "client state must initialize authEpoch to 0");
+    assert.match(script, /authTransition:\s*false/, "client state must initialize authTransition to false");
   });
 
   it("sendMessage checks epoch after await to discard stale replies", () => {
@@ -114,10 +116,13 @@ describe("renderBrowserPage — client-side hardening", () => {
     assert.ok(returnIdx < authClearIdx, "catch must return before state.authenticated is cleared");
   });
 
-  it("cancelPendingChat is defined and aborts activeChatController", () => {
-    assert.match(script, /function cancelPendingChat\b/, "cancelPendingChat must be defined");
-    assert.match(script, /activeChatController\.abort\(\)/, "cancelPendingChat must abort the controller");
-    assert.match(script, /state\.pending\s*=\s*false/, "cancelPendingChat must clear state.pending");
+  it("cancelPendingChat is defined, aborts controller, and clears pending", () => {
+    const cancelBody = script.match(
+      /function cancelPendingChat\(\)\s*\{([\s\S]*?)(?=\n\s*async function|\n\s*function\s+\w)/
+    );
+    assert.ok(cancelBody, "cancelPendingChat must be defined");
+    assert.match(cancelBody[1], /activeChatController\.abort\(\)/, "cancelPendingChat must abort the controller");
+    assert.match(cancelBody[1], /state\.pending\s*=\s*false/, "cancelPendingChat must clear state.pending");
   });
 
   it("sendMessage creates an AbortController and passes signal to postJson", () => {
@@ -131,6 +136,23 @@ describe("renderBrowserPage — client-side hardening", () => {
     );
     assert.ok(sendBody, "sendMessage must have a catch block");
     assert.match(sendBody[1], /err\.name\s*===\s*'AbortError'/, "catch must check for AbortError");
+  });
+
+  it("logout guards on authTransition and clears it on both success and error paths", () => {
+    const logoutBody = script.match(
+      /async function logout\(\)\s*\{([\s\S]*?)(?=\n\s*async function|\n\s*function\s+\w)/
+    );
+    assert.ok(logoutBody, "logout function must exist");
+    const body = logoutBody[1];
+    assert.match(body, /state\.authTransition\)\s*return/, "logout must early-return if authTransition is true");
+    assert.match(body, /state\.authTransition\s*=\s*true/, "logout must set authTransition to true");
+    // Verify authTransition is reset on both paths
+    const catchBlock = body.match(/catch\s*\(err\)\s*\{([\s\S]*?)\breturn;/);
+    assert.ok(catchBlock, "catch block must exist");
+    assert.match(catchBlock[1], /state\.authTransition\s*=\s*false/, "catch must clear authTransition");
+    // Success path must also clear it
+    const successPart = body.slice(body.indexOf("state.authenticated = false"));
+    assert.match(successPart, /state\.authTransition\s*=\s*false/, "success path must clear authTransition");
   });
 
   it("logout calls cancelPendingChat before stopRecognition", () => {
