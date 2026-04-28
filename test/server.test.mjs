@@ -207,6 +207,36 @@ describe("server integration", () => {
     assert.strictEqual(body.ok, true);
   });
 
+  it("POST /browser/login accepts same-origin when forwarded host includes :443", async () => {
+    const res = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port, {
+      "x-forwarded-host": "browser.test:443",
+      origin: "https://browser.test",
+    });
+    assert.strictEqual(res.status, 200);
+    const body = JSON.parse(res.body);
+    assert.strictEqual(body.ok, true);
+  });
+
+  it("POST /browser/login accepts same-origin when origin includes :443", async () => {
+    const res = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port, {
+      "x-forwarded-host": "browser.test",
+      origin: "https://browser.test:443",
+    });
+    assert.strictEqual(res.status, 200);
+    const body = JSON.parse(res.body);
+    assert.strictEqual(body.ok, true);
+  });
+
+  it("POST /browser/login accepts same-origin with case-insensitive host", async () => {
+    const res = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port, {
+      "x-forwarded-host": "Browser.Test",
+      origin: "https://browser.test",
+    });
+    assert.strictEqual(res.status, 200);
+    const body = JSON.parse(res.body);
+    assert.strictEqual(body.ok, true);
+  });
+
   it("POST /browser/chat without cookie → 401", async () => {
     const res = await postJsonBrowser("/browser/chat", { text: "hello" }, port);
     assert.strictEqual(res.status, 401);
