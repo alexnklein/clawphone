@@ -356,6 +356,56 @@ describe("server integration", () => {
     assert.ok(res.headers["permissions-policy"], "Permissions-Policy header should be present");
   });
 
+  it("POST /browser/login with oversized body → JSON error (not text/plain)", async () => {
+    const oversized = '{"code":"' + "a".repeat(70_000) + '"}';
+    const res = await request("POST", "/browser/login", oversized, port, {
+      "content-type": "application/json",
+    });
+    // readBody rejects oversized payloads; response must still be JSON
+    assert.strictEqual(res.status, 413);
+    assert.match(res.headers["content-type"], /application\/json/, "browser body-read error must return JSON");
+    const body = JSON.parse(res.body);
+    assert.ok(body.error, "JSON error body must include an error field");
+  });
+
+  it("POST /browser/chat with oversized body → JSON error (not text/plain)", async () => {
+    // Login first to get a valid session
+    const login = await postJson("/browser/login", { code: "let-me-in" }, port);
+    const cookie = Array.isArray(login.headers["set-cookie"])
+      ? login.headers["set-cookie"][0]
+      : String(login.headers["set-cookie"] || "");
+    const oversized = '{"text":"' + "a".repeat(70_000) + '"}';
+    const res = await request("POST", "/browser/chat", oversized, port, {
+      "content-type": "application/json",
+      cookie,
+    });
+    assert.strictEqual(res.status, 413);
+    assert.match(res.headers["content-type"], /application\/json/, "browser body-read error must return JSON");
+    const body = JSON.parse(res.body);
+    assert.ok(body.error, "JSON error body must include an error field");
+  });
+
+  it("POST /browser/login uses X-Forwarded-For for rate limiting (proxy-aware)", async () => {
+    // Send many login attempts from distinct X-Forwarded-For addresses — all should succeed
+    // (if rate limiting used socket.remoteAddress, they'd collide on 127.0.0.1)
+    const results = [];
+    for (let i = 0; i < 3; i++) {
+      const res = await postJson(
+        "/browser/login",
+        { code: "wrong-code" },
+        port,
+        { "x-forwarded-for": `10.0.0.${100 + i}` }
+      );
+      results.push(res.status);
+    }
+    // All should be 401 (wrong code), NOT 429 (rate limited), because each
+    // has a distinct forwarded IP
+    assert.ok(
+      results.every((s) => s === 401),
+      `all attempts from distinct forwarded IPs should get 401, got: ${results}`
+    );
+  });
+
   // ── /voice ───────────────────────────────────────────────────────────────
 
   it("POST /voice from allowed number → Gather TwiML", async () => {
