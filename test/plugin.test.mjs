@@ -78,6 +78,9 @@ describe("fromPluginConfig", () => {
       openclawSessionId: "my-session",
       openclawAgentId: "my-agent",
       openclawMaxConcurrent: 5,
+      browserEnabled: true,
+      browserPath: "voice-browser/",
+      browserAccessCode: "secret",
     });
 
     assert.strictEqual(cfg.PORT, 9000);
@@ -91,6 +94,9 @@ describe("fromPluginConfig", () => {
     assert.strictEqual(cfg.OPENCLAW_PHONE_SESSION_ID, "my-session");
     assert.strictEqual(cfg.OPENCLAW_AGENT_ID, "my-agent");
     assert.strictEqual(cfg.OPENCLAW_MAX_CONCURRENT, 5);
+    assert.strictEqual(cfg.BROWSER_ENABLED, true);
+    assert.strictEqual(cfg.BROWSER_PATH, "/voice-browser");
+    assert.strictEqual(cfg.BROWSER_ACCESS_CODE, "secret");
   });
 
   it("maps rateLimitMax and rateLimitWindowMs", () => {
@@ -113,6 +119,9 @@ describe("fromPluginConfig", () => {
     assert.strictEqual(cfg.OPENCLAW_MAX_CONCURRENT, 10);
     assert.strictEqual(cfg.RATE_LIMIT_MAX, 20);
     assert.strictEqual(cfg.RATE_LIMIT_WINDOW_MS, 60000);
+    assert.strictEqual(cfg.BROWSER_ENABLED, false);
+    assert.strictEqual(cfg.BROWSER_PATH, "/browser");
+    assert.strictEqual(cfg.BROWSER_ACCESS_CODE, "");
   });
 
   it("includes static constants", () => {
@@ -120,6 +129,7 @@ describe("fromPluginConfig", () => {
     assert.strictEqual(cfg.TWILIO_VOICE, "Google.en-US-Chirp3-HD-Charon");
     assert.strictEqual(cfg.MAX_SAYABLE_LENGTH, 600);
     assert.strictEqual(cfg.OPENCLAW_TIMEOUT_SECONDS, 120);
+    assert.strictEqual(cfg.BROWSER_SESSION_MAX_AGE_SECONDS, 43200);
     assert.ok(Array.isArray(cfg.THINKING_PHRASES));
     assert.ok(cfg.THINKING_PHRASES.length > 0);
     assert.strictEqual(typeof cfg.getRandomThinkingPhrase, "function");
@@ -140,6 +150,7 @@ describe("fromPluginConfig", () => {
       const type = schemaProps[key].type;
       if (type === "number") sentinelInput[key] = 90000 + i;
       else if (type === "array") sentinelInput[key] = [`sentinel-${key}`];
+      else if (type === "boolean") sentinelInput[key] = i % 2 === 0;
       else sentinelInput[key] = `sentinel-${key}`;
     }
 
@@ -152,6 +163,8 @@ describe("fromPluginConfig", () => {
       let expected;
       if (type === "number") expected = 90000 + i;
       else if (type === "array") expected = [`sentinel-${key}`];
+      else if (type === "boolean") expected = i % 2 === 0;
+      else if (key === "browserPath") expected = `/sentinel-${key}`;
       else expected = `sentinel-${key}`;
 
       assert.ok(

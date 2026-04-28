@@ -88,6 +88,21 @@
         "default": "",
         "description": "When set, SMS and voice use this session key instead of creating mode-scoped keys. Set to the Telegram session key (e.g. agent:main:main) for cross-channel context sharing."
       },
+      "browserEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable the authenticated browser voice surface."
+      },
+      "browserPath": {
+        "type": "string",
+        "default": "/browser",
+        "description": "HTTP path that serves the browser voice UI."
+      },
+      "browserAccessCode": {
+        "type": "string",
+        "default": "",
+        "description": "Access code required to unlock the browser voice UI."
+      },
       "callerProfiles": {
         "type": "object",
         "default": {},
@@ -137,6 +152,17 @@
     "sharedSessionKey": {
       "label": "Shared Session Key (cross-channel)",
       "placeholder": "agent:main:main"
+    },
+    "browserEnabled": {
+      "label": "Enable Browser Voice"
+    },
+    "browserPath": {
+      "label": "Browser Voice Path",
+      "placeholder": "/browser"
+    },
+    "browserAccessCode": {
+      "label": "Browser Voice Access Code",
+      "sensitive": true
     },
     "callerProfiles": {
       "label": "Caller Profiles (tiered access)",

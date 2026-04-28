@@ -50,19 +50,25 @@ process.env.TWILIO_AUTH_TOKEN = "";
 process.env.DISCORD_LOG_CHANNEL_ID = ""; // discordLog() returns early (no-op)
 // Short fast-path timeout so /sms tests complete quickly
 process.env.SMS_FAST_TIMEOUT_MS = "200";
+process.env.BROWSER_ENABLED = "true";
+process.env.BROWSER_PATH = "/browser";
+process.env.BROWSER_ACCESS_CODE = "let-me-in";
 
 // Dynamic import: config.mjs is evaluated HERE with the env vars above already set
 const { server } = await import("../server.mjs");
 
 // ── Tiny HTTP helpers ────────────────────────────────────────────────────────
 
-function request(method, path, body, port) {
+function request(method, path, body, port, headers = {}) {
   return new Promise((resolve, reject) => {
+    const contentType = headers["content-type"] || headers["Content-Type"] || "application/x-www-form-urlencoded";
     const encoded =
       body == null
         ? ""
         : typeof body === "string"
         ? body
+        : contentType.includes("application/json")
+        ? JSON.stringify(body)
         : new URLSearchParams(body).toString();
 
     const options = {
@@ -71,8 +77,9 @@ function request(method, path, body, port) {
       path,
       method,
       headers: {
-        "content-type": "application/x-www-form-urlencoded",
+        "content-type": contentType,
         "content-length": Buffer.byteLength(encoded),
+        ...headers,
       },
     };
 
@@ -91,6 +98,8 @@ function request(method, path, body, port) {
 
 const post = (path, body, port) => request("POST", path, body, port);
 const get = (path, port) => request("GET", path, null, port);
+const postJson = (path, body, port, headers = {}) =>
+  request("POST", path, body, port, { "content-type": "application/json", ...headers });
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
@@ -126,6 +135,7 @@ describe("server integration", () => {
     assert.ok(body.uptime >= 0);
     assert.strictEqual(body.activeTurns, 0);
     assert.strictEqual(body.twilioConfigured, false); // test env: no Twilio creds
+    assert.strictEqual(body.browserEnabled, true);
   });
 
   // ── 404 ─────────────────────────────────────────────────────────────────
@@ -138,6 +148,96 @@ describe("server integration", () => {
   it("POST /unknown → 404", async () => {
     const res = await post("/unknown", {}, port);
     assert.strictEqual(res.status, 404);
+  });
+
+  // ── /browser ─────────────────────────────────────────────────────────────
+
+  it("GET /browser → HTML shell", async () => {
+    const res = await get("/browser", port);
+    assert.strictEqual(res.status, 200);
+    assert.match(res.headers["content-type"], /text\/html/);
+    assert.match(res.body, /HouseCarl Voice/);
+  });
+
+  it("POST /browser/login with wrong code → 401", async () => {
+    const res = await postJson("/browser/login", { code: "wrong" }, port);
+    assert.strictEqual(res.status, 401);
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /invalid access code/i);
+  });
+
+  it("POST /browser/login with correct code → session cookie", async () => {
+    const res = await postJson("/browser/login", { code: "let-me-in" }, port);
+    assert.strictEqual(res.status, 200);
+    const body = JSON.parse(res.body);
+    assert.strictEqual(body.ok, true);
+    assert.match(String(res.headers["set-cookie"]), /clawphone_browser=/);
+  });
+
+  it("POST /browser/chat without cookie → 401", async () => {
+    const res = await postJson("/browser/chat", { text: "hello" }, port);
+    assert.strictEqual(res.status, 401);
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /unauthorized/i);
+  });
+
+  it("POST /browser/chat with cookie → JSON reply", async () => {
+    const login = await postJson("/browser/login", { code: "let-me-in" }, port);
+    const cookie = Array.isArray(login.headers["set-cookie"])
+      ? login.headers["set-cookie"][0]
+      : String(login.headers["set-cookie"] || "");
+    const res = await postJson("/browser/chat", { text: "hello from browser" }, port, { cookie });
+    assert.strictEqual(res.status, 200);
+    const body = JSON.parse(res.body);
+    assert.strictEqual(body.ok, true);
+    assert.strictEqual(body.reply, "[test stub]");
+  });
+
+  it("POST /browser/chat with empty text → 400", async () => {
+    const login = await postJson("/browser/login", { code: "let-me-in" }, port);
+    const cookie = Array.isArray(login.headers["set-cookie"])
+      ? login.headers["set-cookie"][0]
+      : String(login.headers["set-cookie"] || "");
+    const res = await postJson("/browser/chat", { text: "   " }, port, { cookie });
+    assert.strictEqual(res.status, 400);
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /message text is required/i);
+  });
+
+  it("POST /browser/logout → clears session cookie", async () => {
+    const res = await postJson("/browser/logout", {}, port);
+    assert.strictEqual(res.status, 200);
+    const body = JSON.parse(res.body);
+    assert.strictEqual(body.ok, true);
+    // Cookie should be cleared (Max-Age=0)
+    assert.match(String(res.headers["set-cookie"]), /Max-Age=0/);
+  });
+
+  it("POST /browser/chat with expired cookie → 401", async () => {
+    // Craft an expired token: timestamp in the past
+    const expiredAt = Date.now() - 60_000;
+    const crypto = await import("node:crypto");
+    const sig = crypto.createHmac("sha256", "let-me-in")
+      .update(String(expiredAt))
+      .digest("base64url");
+    const expiredCookie = `clawphone_browser=${expiredAt}.${sig}`;
+    const res = await postJson("/browser/chat", { text: "hello" }, port, { cookie: expiredCookie });
+    assert.strictEqual(res.status, 401);
+  });
+
+  it("POST /browser/chat with malformed cookie → 401", async () => {
+    const res = await postJson("/browser/chat", { text: "hello" }, port, { cookie: "clawphone_browser=garbage" });
+    assert.strictEqual(res.status, 401);
+  });
+
+  it("GET /browser → security headers present", async () => {
+    const res = await get("/browser", port);
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.headers["x-frame-options"], "DENY");
+    assert.strictEqual(res.headers["x-content-type-options"], "nosniff");
+    assert.ok(res.headers["content-security-policy"], "CSP header should be present");
+    assert.match(res.headers["content-security-policy"], /default-src 'none'/);
+    assert.ok(res.headers["permissions-policy"], "Permissions-Policy header should be present");
   });
 
   // ── /voice ───────────────────────────────────────────────────────────────
