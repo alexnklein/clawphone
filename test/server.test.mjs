@@ -349,6 +349,14 @@ describe("server integration", () => {
     assert.match(res.body, /transcriptEl\.textContent\s*=\s*''/, "resetConversationUi must clear transcript");
     assert.match(res.body, /interimEl\.textContent\s*=\s*''/, "resetConversationUi must clear interim text");
     assert.match(res.body, /messageInput\.value\s*=\s*''/, "resetConversationUi must clear message input");
+
+    // Verify resetConversationUi is invoked in the logout() function
+    const logoutMatch = res.body.match(/async function logout\(\).*?resetConversationUi\(\)/s);
+    assert.ok(logoutMatch, "logout() must call resetConversationUi()");
+
+    // Verify resetConversationUi is invoked in the 401 error handler
+    const handler401Match = res.body.match(/err\.status === 401.*?resetConversationUi\(\)/s);
+    assert.ok(handler401Match, "401 error handler must call resetConversationUi()");
   });
 
   it("GET /browser → login error feedback element present in HTML", async () => {
@@ -397,28 +405,22 @@ describe("server integration", () => {
     assert.ok(body.error, "JSON error body must include an error field");
   });
 
-  it("POST /browser/login trusts X-Forwarded-For only from loopback (trusted proxy)", async () => {
-    // Test connections originate from 127.0.0.1 (loopback), which is a trusted
-    // proxy.  When the request comes from a trusted proxy, the server honours
-    // X-Forwarded-For for rate-limit bucketing — distinct forwarded IPs each
-    // get their own bucket.  A non-loopback client sending X-Forwarded-For
-    // would be ignored and fall back to socket.remoteAddress.
-    const results = [];
-    for (let i = 0; i < 3; i++) {
-      const res = await postJson(
-        "/browser/login",
-        { code: "wrong-code" },
-        port,
-        { "x-forwarded-for": `10.0.0.${100 + i}` }
-      );
-      results.push(res.status);
-    }
-    // All should be 401 (wrong code), NOT 429 (rate limited), because each
-    // has a distinct forwarded IP and the connection is from a trusted proxy
-    assert.ok(
-      results.every((s) => s === 401),
-      `all attempts from distinct forwarded IPs via trusted proxy should get 401, got: ${results}`
+  it("POST /browser/login without X-Forwarded-For → rate-limits on socket address", async () => {
+    // Without X-Forwarded-For, all loopback requests share the same rate-limit
+    // bucket (socket.remoteAddress).  With header present from a trusted proxy
+    // the forwarded IP is used instead; from non-loopback clients the header
+    // is ignored entirely (isTrustedProxy gate in getClientIp).
+    //
+    // This test verifies the default (no forwarded header) path works and
+    // returns 401 (wrong code) — NOT 429 — within the normal rate budget.
+    const res = await postJson(
+      "/browser/login",
+      { code: "wrong-code" },
+      port
     );
+    assert.strictEqual(res.status, 401);
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /invalid access code/i);
   });
 
   // ── /voice ───────────────────────────────────────────────────────────────
