@@ -103,6 +103,16 @@
         "default": "",
         "description": "Access code required to unlock the browser voice UI."
       },
+      "browserSessionMaxAgeSeconds": {
+        "type": "number",
+        "default": 43200,
+        "description": "Maximum idle time (seconds) before a browser session expires. Default: 43200 (12 h)."
+      },
+      "maxBrowserSessions": {
+        "type": "number",
+        "default": 1000,
+        "description": "Maximum concurrent browser sessions before new logins are rejected. Default: 1000."
+      },
       "trustedProxyIps": {
         "type": "string",
         "default": "127.0.0.1,::1,::ffff:127.0.0.1",

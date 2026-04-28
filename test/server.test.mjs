@@ -1236,3 +1236,80 @@ describe("browser session pruning", () => {
     assert.strictEqual(loginC.status, 200, "login must succeed after expired sessions are pruned");
   });
 });
+
+// ── Session idle-timeout refresh test ──────────────────────────────────────
+// Uses a 2-second session TTL so we can prove that authenticated traffic
+// extends the session beyond the original wall-clock expiry.
+describe("browser session idle-timeout refresh", () => {
+  let idleServer;
+  let idlePort;
+
+  const idleGetBrowser = (path, headers = {}) =>
+    request("GET", path, null, idlePort, {
+      "x-forwarded-proto": "https",
+      ...headers,
+    });
+
+  const idlePostJsonBrowser = (path, body, headers = {}) =>
+    request("POST", path, body, idlePort, {
+      "content-type": "application/json",
+      "x-forwarded-proto": "https",
+      origin: `https://localhost:${idlePort}`,
+      ...headers,
+    });
+
+  before(async () => {
+    const { createServer } = await import("../lib/http-server.mjs");
+    idleServer = await createServer({
+      ...CAP_BASE_CONFIG,
+      BROWSER_SESSION_MAX_AGE_SECONDS: 2, // 2s idle TTL
+    });
+    idlePort = /** @type {import('node:net').AddressInfo} */ (idleServer.address()).port;
+  });
+
+  after(async () => {
+    await new Promise((resolve) => idleServer.close(() => resolve(undefined)));
+  });
+
+  it("active session is extended by authenticated GET /browser traffic", async () => {
+    // Login → session has 2s idle TTL
+    const login = await idlePostJsonBrowser("/browser/login", { code: "cap-test-code" });
+    assert.strictEqual(login.status, 200);
+    const cookie = String(login.headers["set-cookie"] || "");
+    assert.match(cookie, /clawphone_browser=/);
+
+    // Wait 1.2s (past the midpoint of the 2s TTL)
+    await new Promise((r) => setTimeout(r, 1200));
+
+    // Hit GET /browser — should extend the session by another 2s
+    const page = await idleGetBrowser("/browser", { cookie });
+    assert.strictEqual(page.status, 200);
+    assert.match(page.body, /"authenticated":true/);
+    // Cookie must be reissued with fresh Max-Age
+    assert.ok(page.headers["set-cookie"], "session cookie must be refreshed on GET /browser");
+    assert.match(String(page.headers["set-cookie"]), /Max-Age=2/);
+
+    // Wait another 1.2s — total 2.4s since login, but only 1.2s since last access
+    await new Promise((r) => setTimeout(r, 1200));
+
+    // Session must still be valid because the GET above reset the idle timer
+    const page2 = await idleGetBrowser("/browser", { cookie });
+    assert.strictEqual(page2.status, 200);
+    assert.match(page2.body, /"authenticated":true/, "session must survive past original TTL when kept active");
+  });
+
+  it("idle session expires after the configured TTL with no activity", async () => {
+    // Login → session has 2s idle TTL
+    const login = await idlePostJsonBrowser("/browser/login", { code: "cap-test-code" });
+    assert.strictEqual(login.status, 200);
+    const cookie = String(login.headers["set-cookie"] || "");
+
+    // Wait for the session to fully expire (2s TTL + margin)
+    await new Promise((r) => setTimeout(r, 2200));
+
+    // Session should be expired — GET /browser should show unauthenticated page
+    const page = await idleGetBrowser("/browser", { cookie });
+    assert.strictEqual(page.status, 200);
+    assert.match(page.body, /"authenticated":false/, "idle session must expire after TTL elapses");
+  });
+});
