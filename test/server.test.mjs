@@ -213,15 +213,9 @@ describe("server integration", () => {
     assert.match(String(res.headers["set-cookie"]), /Max-Age=0/);
   });
 
-  it("POST /browser/chat with expired cookie → 401", async () => {
-    // Craft an expired token: timestamp in the past
-    const expiredAt = Date.now() - 60_000;
-    const crypto = await import("node:crypto");
-    const sig = crypto.createHmac("sha256", "let-me-in")
-      .update(String(expiredAt))
-      .digest("base64url");
-    const expiredCookie = `clawphone_browser=${expiredAt}.${sig}`;
-    const res = await postJson("/browser/chat", { text: "hello" }, port, { cookie: expiredCookie });
+  it("POST /browser/chat with unknown session cookie → 401", async () => {
+    // A random session ID that was never issued by the server
+    const res = await postJson("/browser/chat", { text: "hello" }, port, { cookie: "clawphone_browser=bogus-session-id" });
     assert.strictEqual(res.status, 401);
   });
 
@@ -233,6 +227,25 @@ describe("server integration", () => {
   it("POST /browser/chat with invalid percent-encoded cookie → 401 (not crash)", async () => {
     const res = await postJson("/browser/chat", { text: "hello" }, port, { cookie: "clawphone_browser=%E0%A4%A" });
     assert.strictEqual(res.status, 401);
+  });
+
+  it("POST /browser/logout revokes session — old cookie rejected", async () => {
+    // Login to get a valid session cookie
+    const login = await postJson("/browser/login", { code: "let-me-in" }, port);
+    const cookie = Array.isArray(login.headers["set-cookie"])
+      ? login.headers["set-cookie"][0]
+      : String(login.headers["set-cookie"] || "");
+
+    // Verify the cookie works before logout
+    const chatBefore = await postJson("/browser/chat", { text: "hi" }, port, { cookie });
+    assert.strictEqual(chatBefore.status, 200);
+
+    // Logout (server-side revocation)
+    await postJson("/browser/logout", {}, port, { cookie });
+
+    // Replay the old cookie → must be rejected
+    const chatAfter = await postJson("/browser/chat", { text: "hi" }, port, { cookie });
+    assert.strictEqual(chatAfter.status, 401, "old cookie must be rejected after logout");
   });
 
   it("GET /browser/ (trailing slash) → same HTML shell as /browser", async () => {
