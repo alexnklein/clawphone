@@ -53,6 +53,7 @@ process.env.SMS_FAST_TIMEOUT_MS = "200";
 process.env.BROWSER_ENABLED = "true";
 process.env.BROWSER_PATH = "/browser";
 process.env.BROWSER_ACCESS_CODE = "let-me-in";
+process.env.RATE_LIMIT_MAX = "200"; // High limit for test suite
 
 // Dynamic import: config.mjs is evaluated HERE with the env vars above already set
 const { server } = await import("../server.mjs");
@@ -103,10 +104,16 @@ const postJson = (path, body, port, headers = {}) =>
 
 // Browser routes require HTTPS.  Test connections come from loopback (trusted
 // proxy), so we simulate HTTPS by sending x-forwarded-proto: https.
+// Browser POST routes also require a same-origin Origin header.
 const HTTPS_HEADER = { "x-forwarded-proto": "https" };
 const getBrowser = (path, port) => request("GET", path, null, port, HTTPS_HEADER);
 const postJsonBrowser = (path, body, port, headers = {}) =>
-  request("POST", path, body, port, { "content-type": "application/json", ...HTTPS_HEADER, ...headers });
+  request("POST", path, body, port, {
+    "content-type": "application/json",
+    origin: `https://localhost:${port}`,
+    ...HTTPS_HEADER,
+    ...headers,
+  });
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
@@ -464,6 +471,7 @@ describe("server integration", () => {
     const oversized = '{"code":"' + "a".repeat(70_000) + '"}';
     const res = await request("POST", "/browser/login", oversized, port, {
       "content-type": "application/json",
+      origin: `https://localhost:${port}`,
       ...HTTPS_HEADER,
     });
     // readBody rejects oversized payloads; response must still be JSON
@@ -482,6 +490,7 @@ describe("server integration", () => {
     const oversized = '{"text":"' + "a".repeat(70_000) + '"}';
     const res = await request("POST", "/browser/chat", oversized, port, {
       "content-type": "application/json",
+      origin: `https://localhost:${port}`,
       ...HTTPS_HEADER,
       cookie,
     });
@@ -514,6 +523,7 @@ describe("server integration", () => {
   it("POST /browser/login with null JSON body → 400", async () => {
     const res = await request("POST", "/browser/login", "null", port, {
       "content-type": "application/json",
+      origin: `https://localhost:${port}`,
       ...HTTPS_HEADER,
     });
     assert.strictEqual(res.status, 400);
@@ -524,6 +534,7 @@ describe("server integration", () => {
   it("POST /browser/login with JSON array body → 400", async () => {
     const res = await request("POST", "/browser/login", '[1,2,3]', port, {
       "content-type": "application/json",
+      origin: `https://localhost:${port}`,
       ...HTTPS_HEADER,
     });
     assert.strictEqual(res.status, 400);
@@ -534,6 +545,7 @@ describe("server integration", () => {
   it("POST /browser/login with JSON string body → 400", async () => {
     const res = await request("POST", "/browser/login", '"hello"', port, {
       "content-type": "application/json",
+      origin: `https://localhost:${port}`,
       ...HTTPS_HEADER,
     });
     assert.strictEqual(res.status, 400);
@@ -545,6 +557,7 @@ describe("server integration", () => {
     // Without a session the auth check fires first
     const res = await request("POST", "/browser/chat", "null", port, {
       "content-type": "application/json",
+      origin: `https://localhost:${port}`,
       ...HTTPS_HEADER,
     });
     assert.strictEqual(res.status, 401);
@@ -557,12 +570,98 @@ describe("server integration", () => {
       : String(login.headers["set-cookie"] || "");
     const res = await request("POST", "/browser/chat", "null", port, {
       "content-type": "application/json",
+      origin: `https://localhost:${port}`,
       ...HTTPS_HEADER,
       cookie,
     });
     assert.strictEqual(res.status, 400);
     const body = JSON.parse(res.body);
     assert.match(body.error, /invalid request body/i);
+  });
+
+  // ── Missing Origin → 403 ────────────────────────────────────────────────
+
+  it("POST /browser/login without Origin header → 403", async () => {
+    const res = await request("POST", "/browser/login", '{"code":"let-me-in"}', port, {
+      "content-type": "application/json",
+      ...HTTPS_HEADER,
+      // no origin header
+    });
+    assert.strictEqual(res.status, 403, "missing Origin must be rejected");
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /forbidden/i);
+  });
+
+  it("POST /browser/chat without Origin header → 403", async () => {
+    const login = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
+    const cookie = Array.isArray(login.headers["set-cookie"])
+      ? login.headers["set-cookie"][0]
+      : String(login.headers["set-cookie"] || "");
+    const res = await request("POST", "/browser/chat", '{"text":"hello"}', port, {
+      "content-type": "application/json",
+      ...HTTPS_HEADER,
+      cookie,
+      // no origin header
+    });
+    assert.strictEqual(res.status, 403, "missing Origin must be rejected");
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /forbidden/i);
+  });
+
+  it("POST /browser/logout without Origin header → 403", async () => {
+    const login = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
+    const cookie = Array.isArray(login.headers["set-cookie"])
+      ? login.headers["set-cookie"][0]
+      : String(login.headers["set-cookie"] || "");
+    const res = await request("POST", "/browser/logout", '{}', port, {
+      "content-type": "application/json",
+      ...HTTPS_HEADER,
+      cookie,
+      // no origin header
+    });
+    assert.strictEqual(res.status, 403, "missing Origin must be rejected");
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /forbidden/i);
+  });
+
+  // ── Non-JSON content type → 415 ──────────────────────────────────────
+
+  it("POST /browser/login with form-urlencoded body → 415", async () => {
+    const res = await request("POST", "/browser/login", "code=let-me-in", port, {
+      "content-type": "application/x-www-form-urlencoded",
+      origin: `https://localhost:${port}`,
+      ...HTTPS_HEADER,
+    });
+    assert.strictEqual(res.status, 415, "form-urlencoded must be rejected on browser routes");
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /unsupported content type/i);
+  });
+
+  it("POST /browser/chat with form-urlencoded body → 415", async () => {
+    const login = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
+    const cookie = Array.isArray(login.headers["set-cookie"])
+      ? login.headers["set-cookie"][0]
+      : String(login.headers["set-cookie"] || "");
+    const res = await request("POST", "/browser/chat", "text=hello", port, {
+      "content-type": "application/x-www-form-urlencoded",
+      origin: `https://localhost:${port}`,
+      ...HTTPS_HEADER,
+      cookie,
+    });
+    assert.strictEqual(res.status, 415, "form-urlencoded must be rejected on browser routes");
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /unsupported content type/i);
+  });
+
+  it("POST /browser/login with text/plain body → 415", async () => {
+    const res = await request("POST", "/browser/login", '{"code":"let-me-in"}', port, {
+      "content-type": "text/plain",
+      origin: `https://localhost:${port}`,
+      ...HTTPS_HEADER,
+    });
+    assert.strictEqual(res.status, 415, "text/plain must be rejected on browser routes");
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /unsupported content type/i);
   });
 
   // ── /voice ───────────────────────────────────────────────────────────────
