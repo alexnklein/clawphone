@@ -245,6 +245,20 @@ describe("server integration", () => {
     assert.match(body.error, /forbidden/i);
   });
 
+  it("POST /browser/chat with cross-origin Origin header → 403", async () => {
+    const login = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
+    const cookie = Array.isArray(login.headers["set-cookie"])
+      ? login.headers["set-cookie"][0]
+      : String(login.headers["set-cookie"] || "");
+    const res = await postJsonBrowser("/browser/chat", { text: "hello" }, port, {
+      cookie,
+      origin: "https://evil.example.com",
+    });
+    assert.strictEqual(res.status, 403, "cross-origin chat must be rejected");
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /forbidden/i);
+  });
+
   it("POST /browser/chat with unknown session cookie → 401", async () => {
     // A random session ID that was never issued by the server
     const res = await postJsonBrowser("/browser/chat", { text: "hello" }, port, { cookie: "clawphone_browser=bogus-session-id" });
