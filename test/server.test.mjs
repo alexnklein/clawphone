@@ -255,6 +255,42 @@ describe("server integration", () => {
     assert.match(res.body, /HouseCarl Voice/);
   });
 
+  it("POST /browser/login on forwarded HTTPS → hardened cookie attributes", async () => {
+    const res = await postJson(
+      "/browser/login",
+      { code: "let-me-in" },
+      port,
+      { "x-forwarded-proto": "https" }
+    );
+    assert.strictEqual(res.status, 200);
+    const cookie = String(res.headers["set-cookie"] || "");
+    assert.match(cookie, /HttpOnly/, "cookie must be HttpOnly");
+    assert.match(cookie, /SameSite=Lax/, "cookie must be SameSite=Lax");
+    assert.match(cookie, /Path=\/browser/, "cookie must be scoped to /browser");
+    assert.match(cookie, /Secure/, "cookie must include Secure on HTTPS");
+  });
+
+  it("POST /browser/login on plain HTTP → no Secure flag", async () => {
+    const res = await postJson(
+      "/browser/login",
+      { code: "let-me-in" },
+      port
+    );
+    assert.strictEqual(res.status, 200);
+    const cookie = String(res.headers["set-cookie"] || "");
+    assert.match(cookie, /HttpOnly/, "cookie must be HttpOnly");
+    assert.match(cookie, /SameSite=Lax/, "cookie must be SameSite=Lax");
+    assert.match(cookie, /Path=\/browser/, "cookie must be scoped to /browser");
+    assert.doesNotMatch(cookie, /Secure/, "cookie must NOT include Secure on plain HTTP");
+  });
+
+  it("GET /browser → login error feedback element present in HTML", async () => {
+    const res = await get("/browser", port);
+    assert.strictEqual(res.status, 200);
+    assert.match(res.body, /id="loginStatus"/, "login card must contain a visible status element for error feedback");
+    assert.match(res.body, /id="loginCard"/, "login card must exist");
+  });
+
   it("GET /browser → security headers present", async () => {
     const res = await get("/browser", port);
     assert.strictEqual(res.status, 200);
