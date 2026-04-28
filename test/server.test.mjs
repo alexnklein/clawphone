@@ -1078,3 +1078,131 @@ describe("server integration", () => {
     assert.strictEqual(res.status, 413);
   });
 });
+
+// ── Session cap and pruning tests ──────────────────────────────────────────
+// Uses separate servers with MAX_BROWSER_SESSIONS=2 so we can exercise the
+// cap and pruning paths without 1000 logins.
+
+const CAP_BASE_CONFIG = {
+  PORT: 0,
+  ALLOW_FROM: [],
+  ACK_ALLOW_FROM: [],
+  TWILIO_ACCOUNT_SID: "",
+  TWILIO_AUTH_TOKEN: "",
+  TWILIO_SMS_FROM: "",
+  PUBLIC_BASE_URL: "",
+  SMS_MAX_CHARS: 280,
+  SMS_FAST_TIMEOUT_MS: 200,
+  MAX_SAYABLE_LENGTH: 600,
+  CALLER_NAME: "",
+  AGENT_NAME: "",
+  GREETING_TEXT: "Hello",
+  RATE_LIMIT_MAX: 200,
+  RATE_LIMIT_WINDOW_MS: 60000,
+  getRandomThinkingPhrase: () => "One moment.",
+  POLL_FILLER_PHRASES: [],
+  CALLER_PROFILES: {},
+  BROWSER_ENABLED: true,
+  BROWSER_PATH: "/browser",
+  BROWSER_ACCESS_CODE: "cap-test-code",
+  TRUSTED_PROXY_IPS: "127.0.0.1,::1,::ffff:127.0.0.1",
+  MAX_BROWSER_SESSIONS: 2,
+  OPENCLAW_AGENT_ID: "test",
+  OPENCLAW_PHONE_SESSION_ID: "test",
+};
+
+describe("browser session cap and pruning", () => {
+  let capServer;
+  let capPort;
+
+  const capPostJsonBrowser = (path, body, headers = {}) =>
+    request("POST", path, body, capPort, {
+      "content-type": "application/json",
+      "x-forwarded-proto": "https",
+      origin: `https://localhost:${capPort}`,
+      ...headers,
+    });
+
+  before(async () => {
+    const { createServer } = await import("../lib/http-server.mjs");
+    // Long session age — sessions must NOT expire mid-test
+    capServer = await createServer({
+      ...CAP_BASE_CONFIG,
+      BROWSER_SESSION_MAX_AGE_SECONDS: 300,
+    });
+    capPort = /** @type {import('node:net').AddressInfo} */ (capServer.address()).port;
+  });
+
+  after(async () => {
+    await new Promise((resolve) => capServer.close(() => resolve(undefined)));
+  });
+
+  it("preserves the current session when re-login hits the session cap", async () => {
+    // Fill 2/2 session slots (two logins, no cookie reuse)
+    const login1 = await capPostJsonBrowser("/browser/login", { code: "cap-test-code" });
+    assert.strictEqual(login1.status, 200);
+    const cookie1 = String(login1.headers["set-cookie"] || "");
+
+    const login2 = await capPostJsonBrowser("/browser/login", { code: "cap-test-code" });
+    assert.strictEqual(login2.status, 200);
+
+    // Re-login with cookie1: createBrowserSession() runs before the old session
+    // is deleted, so the cap (2) is hit and it throws 503.
+    const relogin = await capPostJsonBrowser("/browser/login", { code: "cap-test-code" }, { cookie: cookie1 });
+    assert.strictEqual(relogin.status, 503, "re-login at cap must fail with 503");
+
+    // Verify the original session is still valid by checking GET /browser embeds
+    // authenticated:true — this avoids calling /browser/chat (which spawns an
+    // agent process and would block for seconds).
+    const getPage = await request("GET", "/browser", null, capPort, {
+      "x-forwarded-proto": "https",
+      cookie: cookie1,
+    });
+    assert.strictEqual(getPage.status, 200);
+    assert.match(getPage.body, /"authenticated":true/, "existing session must survive a failed re-login at cap");
+  });
+});
+
+// Separate describe for the pruning test — uses a 1-second session expiry
+// so we can verify expired sessions are pruned before the cap check.
+describe("browser session pruning", () => {
+  let pruneServer;
+  let prunePort;
+
+  const prunePostJsonBrowser = (path, body, headers = {}) =>
+    request("POST", path, body, prunePort, {
+      "content-type": "application/json",
+      "x-forwarded-proto": "https",
+      origin: `https://localhost:${prunePort}`,
+      ...headers,
+    });
+
+  before(async () => {
+    const { createServer } = await import("../lib/http-server.mjs");
+    pruneServer = await createServer({
+      ...CAP_BASE_CONFIG,
+      BROWSER_SESSION_MAX_AGE_SECONDS: 1, // 1s so expiry is fast
+    });
+    prunePort = /** @type {import('node:net').AddressInfo} */ (pruneServer.address()).port;
+  });
+
+  after(async () => {
+    await new Promise((resolve) => pruneServer.close(() => resolve(undefined)));
+  });
+
+  it("prunes expired sessions before enforcing the cap", async () => {
+    // Fill 2/2 slots with fresh sessions
+    const loginA = await prunePostJsonBrowser("/browser/login", { code: "cap-test-code" });
+    assert.strictEqual(loginA.status, 200);
+    const loginB = await prunePostJsonBrowser("/browser/login", { code: "cap-test-code" });
+    assert.strictEqual(loginB.status, 200);
+
+    // Wait for both sessions to expire (BROWSER_SESSION_MAX_AGE_SECONDS = 1)
+    await new Promise((r) => setTimeout(r, 1200));
+
+    // Login again: pruneExpiredBrowserSessions() removes the two expired entries
+    // before the cap check, so the new session creation succeeds.
+    const loginC = await prunePostJsonBrowser("/browser/login", { code: "cap-test-code" });
+    assert.strictEqual(loginC.status, 200, "login must succeed after expired sessions are pruned");
+  });
+});
