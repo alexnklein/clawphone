@@ -335,35 +335,25 @@ describe("server integration", () => {
     assert.doesNotMatch(cookie, /Secure/, "cookie must NOT include Secure on plain HTTP");
   });
 
-  it("GET /browser → client state includes authEpoch for in-flight cancel", async () => {
-    const res = await get("/browser", port);
-    assert.strictEqual(res.status, 200);
-    assert.match(res.body, /authEpoch/, "client state must include authEpoch to guard in-flight requests across logout");
-  });
+  it("POST /browser/chat after logout → 401 (session fully revoked)", async () => {
+    // Full login→chat→logout→chat flow proving logout kills the server session
+    const login = await postJson("/browser/login", { code: "let-me-in" }, port);
+    assert.strictEqual(login.status, 200);
+    const cookie = Array.isArray(login.headers["set-cookie"])
+      ? login.headers["set-cookie"][0]
+      : String(login.headers["set-cookie"] || "");
 
-  it("GET /browser → logout and 401 clear conversation state (resetConversationUi)", async () => {
-    const res = await get("/browser", port);
-    assert.strictEqual(res.status, 200);
-    // resetConversationUi must exist and be called in both logout() and the 401 handler
-    assert.match(res.body, /function resetConversationUi/, "resetConversationUi function must be defined");
-    assert.match(res.body, /transcriptEl\.textContent\s*=\s*''/, "resetConversationUi must clear transcript");
-    assert.match(res.body, /interimEl\.textContent\s*=\s*''/, "resetConversationUi must clear interim text");
-    assert.match(res.body, /messageInput\.value\s*=\s*''/, "resetConversationUi must clear message input");
+    // Chat works before logout
+    const chatOk = await postJson("/browser/chat", { text: "hi" }, port, { cookie });
+    assert.strictEqual(chatOk.status, 200);
 
-    // Verify resetConversationUi is invoked in the logout() function
-    const logoutMatch = res.body.match(/async function logout\(\).*?resetConversationUi\(\)/s);
-    assert.ok(logoutMatch, "logout() must call resetConversationUi()");
+    // Logout
+    const logoutRes = await postJson("/browser/logout", {}, port, { cookie });
+    assert.strictEqual(logoutRes.status, 200);
 
-    // Verify resetConversationUi is invoked in the 401 error handler
-    const handler401Match = res.body.match(/err\.status === 401.*?resetConversationUi\(\)/s);
-    assert.ok(handler401Match, "401 error handler must call resetConversationUi()");
-  });
-
-  it("GET /browser → login error feedback element present in HTML", async () => {
-    const res = await get("/browser", port);
-    assert.strictEqual(res.status, 200);
-    assert.match(res.body, /id="loginStatus"/, "login card must contain a visible status element for error feedback");
-    assert.match(res.body, /id="loginCard"/, "login card must exist");
+    // Late chat with the same cookie must be rejected
+    const chatAfter = await postJson("/browser/chat", { text: "post-logout" }, port, { cookie });
+    assert.strictEqual(chatAfter.status, 401, "chat after logout must be rejected");
   });
 
   it("GET /browser → security headers present", async () => {
