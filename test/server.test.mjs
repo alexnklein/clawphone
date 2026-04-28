@@ -413,6 +413,57 @@ describe("server integration", () => {
     assert.match(body.error, /invalid access code/i);
   });
 
+  // ── null / non-object JSON body rejection ─────────────────────────────
+
+  it("POST /browser/login with null JSON body → 400", async () => {
+    const res = await request("POST", "/browser/login", "null", port, {
+      "content-type": "application/json",
+    });
+    assert.strictEqual(res.status, 400);
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /invalid request body/i);
+  });
+
+  it("POST /browser/login with JSON array body → 400", async () => {
+    const res = await request("POST", "/browser/login", '[1,2,3]', port, {
+      "content-type": "application/json",
+    });
+    assert.strictEqual(res.status, 400);
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /invalid request body/i);
+  });
+
+  it("POST /browser/login with JSON string body → 400", async () => {
+    const res = await request("POST", "/browser/login", '"hello"', port, {
+      "content-type": "application/json",
+    });
+    assert.strictEqual(res.status, 400);
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /invalid request body/i);
+  });
+
+  it("POST /browser/chat with null JSON body → 401 (no session)", async () => {
+    // Without a session the auth check fires first
+    const res = await request("POST", "/browser/chat", "null", port, {
+      "content-type": "application/json",
+    });
+    assert.strictEqual(res.status, 401);
+  });
+
+  it("POST /browser/chat with null JSON body + valid session → 400", async () => {
+    const login = await postJson("/browser/login", { code: "let-me-in" }, port);
+    const cookie = Array.isArray(login.headers["set-cookie"])
+      ? login.headers["set-cookie"][0]
+      : String(login.headers["set-cookie"] || "");
+    const res = await request("POST", "/browser/chat", "null", port, {
+      "content-type": "application/json",
+      cookie,
+    });
+    assert.strictEqual(res.status, 400);
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /invalid request body/i);
+  });
+
   // ── /voice ───────────────────────────────────────────────────────────────
 
   it("POST /voice from allowed number → Gather TwiML", async () => {
