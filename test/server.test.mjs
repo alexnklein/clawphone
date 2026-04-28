@@ -579,6 +579,132 @@ describe("server integration", () => {
     assert.match(body.error, /invalid request body/i);
   });
 
+  // ── Non-string field type rejection ──────────────────────────────────────
+
+  it("POST /browser/login with non-string code (array) → 400", async () => {
+    const res = await postJsonBrowser("/browser/login", { code: ["let-me-in"] }, port);
+    assert.strictEqual(res.status, 400, "array code must be rejected");
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /access code must be a string/i);
+  });
+
+  it("POST /browser/login with non-string code (object) → 400", async () => {
+    const res = await postJsonBrowser("/browser/login", { code: { value: "let-me-in" } }, port);
+    assert.strictEqual(res.status, 400, "object code must be rejected");
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /access code must be a string/i);
+  });
+
+  it("POST /browser/login with non-string code (number) → 400", async () => {
+    const res = await postJsonBrowser("/browser/login", { code: 12345 }, port);
+    assert.strictEqual(res.status, 400, "number code must be rejected");
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /access code must be a string/i);
+  });
+
+  it("POST /browser/login with missing code field → 400", async () => {
+    const res = await postJsonBrowser("/browser/login", {}, port);
+    assert.strictEqual(res.status, 400, "missing code must be rejected");
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /access code must be a string/i);
+  });
+
+  it("POST /browser/chat with non-string text (array) → 400", async () => {
+    const login = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
+    const cookie = Array.isArray(login.headers["set-cookie"])
+      ? login.headers["set-cookie"][0]
+      : String(login.headers["set-cookie"] || "");
+    const res = await postJsonBrowser("/browser/chat", { text: ["hello"] }, port, { cookie });
+    assert.strictEqual(res.status, 400, "array text must be rejected");
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /message text must be a string/i);
+  });
+
+  it("POST /browser/chat with non-string text (object) → 400", async () => {
+    const login = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
+    const cookie = Array.isArray(login.headers["set-cookie"])
+      ? login.headers["set-cookie"][0]
+      : String(login.headers["set-cookie"] || "");
+    const res = await postJsonBrowser("/browser/chat", { text: {} }, port, { cookie });
+    assert.strictEqual(res.status, 400, "object text must be rejected");
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /message text must be a string/i);
+  });
+
+  it("POST /browser/chat with non-string text (number) → 400", async () => {
+    const login = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
+    const cookie = Array.isArray(login.headers["set-cookie"])
+      ? login.headers["set-cookie"][0]
+      : String(login.headers["set-cookie"] || "");
+    const res = await postJsonBrowser("/browser/chat", { text: 42 }, port, { cookie });
+    assert.strictEqual(res.status, 400, "number text must be rejected");
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /message text must be a string/i);
+  });
+
+  it("POST /browser/chat with missing text field → 400", async () => {
+    const login = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
+    const cookie = Array.isArray(login.headers["set-cookie"])
+      ? login.headers["set-cookie"][0]
+      : String(login.headers["set-cookie"] || "");
+    const res = await postJsonBrowser("/browser/chat", {}, port, { cookie });
+    assert.strictEqual(res.status, 400, "missing text must be rejected");
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /message text must be a string/i);
+  });
+
+  // ── /browser/logout body validation ────────────────────────────────────
+
+  it("POST /browser/logout with oversized body → 413 JSON error", async () => {
+    const login = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
+    const cookie = Array.isArray(login.headers["set-cookie"])
+      ? login.headers["set-cookie"][0]
+      : String(login.headers["set-cookie"] || "");
+    const oversized = '{"extra":"' + "a".repeat(70_000) + '"}';
+    const res = await request("POST", "/browser/logout", oversized, port, {
+      "content-type": "application/json",
+      origin: `https://localhost:${port}`,
+      ...HTTPS_HEADER,
+      cookie,
+    });
+    assert.strictEqual(res.status, 413);
+    assert.match(res.headers["content-type"], /application\/json/, "logout oversized error must return JSON");
+    const body = JSON.parse(res.body);
+    assert.ok(body.error, "JSON error body must include an error field");
+  });
+
+  it("POST /browser/logout with malformed JSON body → 400", async () => {
+    const login = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
+    const cookie = Array.isArray(login.headers["set-cookie"])
+      ? login.headers["set-cookie"][0]
+      : String(login.headers["set-cookie"] || "");
+    const res = await request("POST", "/browser/logout", "{bad json", port, {
+      "content-type": "application/json",
+      origin: `https://localhost:${port}`,
+      ...HTTPS_HEADER,
+      cookie,
+    });
+    assert.strictEqual(res.status, 400);
+    const body = JSON.parse(res.body);
+    assert.ok(body.error);
+  });
+
+  it("POST /browser/logout with JSON array body → 400", async () => {
+    const login = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
+    const cookie = Array.isArray(login.headers["set-cookie"])
+      ? login.headers["set-cookie"][0]
+      : String(login.headers["set-cookie"] || "");
+    const res = await request("POST", "/browser/logout", "[1,2]", port, {
+      "content-type": "application/json",
+      origin: `https://localhost:${port}`,
+      ...HTTPS_HEADER,
+      cookie,
+    });
+    assert.strictEqual(res.status, 400);
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /invalid request body/i);
+  });
+
   // ── Missing Origin → 403 ────────────────────────────────────────────────
 
   it("POST /browser/login without Origin header → 403", async () => {
