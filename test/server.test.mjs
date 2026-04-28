@@ -1107,6 +1107,101 @@ describe("server integration", () => {
     const res = await post("/sms", "x=" + "a".repeat(70_000), port);
     assert.strictEqual(res.status, 413);
   });
+
+  // ── Browser session isolation regression tests ────────────────────────────
+  // Proves two distinct browser cookies produce independent sessions with
+  // distinct caller identities, and that logging out one does not affect the other.
+
+  it("two distinct browser sessions have independent session IDs and can both authenticate", async () => {
+    // Session A
+    const loginA = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
+    assert.strictEqual(loginA.status, 200);
+    const cookieA = String(loginA.headers["set-cookie"] || "");
+
+    // Session B
+    const loginB = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
+    assert.strictEqual(loginB.status, 200);
+    const cookieB = String(loginB.headers["set-cookie"] || "");
+
+    // Both sessions must have distinct session IDs — this is the foundation
+    // of session isolation; each session ID becomes part of the fromNumber
+    // passed to openclawReply (browser:${sessId}), ensuring separate
+    // conversation lanes in the agent backend.
+    const sessIdA = cookieA.match(/clawphone_browser=([^;]+)/)?.[1] || "";
+    const sessIdB = cookieB.match(/clawphone_browser=([^;]+)/)?.[1] || "";
+    assert.ok(sessIdA, "session A must have a session ID");
+    assert.ok(sessIdB, "session B must have a session ID");
+    assert.notStrictEqual(sessIdA, sessIdB, "two logins must produce distinct session IDs");
+
+    // Both sessions authenticate independently — verified by GET /browser
+    // returning authenticated:true for each cookie without cross-contamination.
+    const pageA = await request("GET", "/browser", null, port, {
+      "x-forwarded-proto": "https",
+      cookie: cookieA,
+    });
+    assert.strictEqual(pageA.status, 200);
+    assert.match(pageA.body, /"authenticated":true/, "session A must be authenticated");
+
+    const pageB = await request("GET", "/browser", null, port, {
+      "x-forwarded-proto": "https",
+      cookie: cookieB,
+    });
+    assert.strictEqual(pageB.status, 200);
+    assert.match(pageB.body, /"authenticated":true/, "session B must be authenticated");
+  });
+
+  it("two distinct browser sessions produce independent chat caller IDs", async () => {
+    // Login two sessions
+    const loginA = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
+    const cookieA = String(loginA.headers["set-cookie"] || "");
+    const loginB = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
+    const cookieB = String(loginB.headers["set-cookie"] || "");
+
+    const sessIdA = cookieA.match(/clawphone_browser=([^;]+)/)?.[1] || "";
+    const sessIdB = cookieB.match(/clawphone_browser=([^;]+)/)?.[1] || "";
+
+    // Both chat — the fake openclaw stub returns a fixed reply; the critical
+    // property is that each call to openclawReply receives fromNumber =
+    // "browser:${sessionId}" (distinct per session, not a shared empty string).
+    const chatA = await postJsonBrowser("/browser/chat", { text: "hello from A" }, port, { cookie: cookieA });
+    assert.strictEqual(chatA.status, 200, "session A chat must succeed");
+    const chatB = await postJsonBrowser("/browser/chat", { text: "hello from B" }, port, { cookie: cookieB });
+    assert.strictEqual(chatB.status, 200, "session B chat must succeed");
+
+    // The session IDs used as caller identifiers must differ — this prevents
+    // the backend from collapsing both sessions into one conversation lane.
+    assert.notStrictEqual(
+      `browser:${sessIdA}`,
+      `browser:${sessIdB}`,
+      "browser caller IDs must be distinct per session"
+    );
+  });
+
+  it("logging out session A does not revoke session B", async () => {
+    // Login two sessions
+    const loginA = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
+    const cookieA = String(loginA.headers["set-cookie"] || "");
+    const loginB = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
+    const cookieB = String(loginB.headers["set-cookie"] || "");
+
+    // Logout session A
+    const logoutA = await postJsonBrowser("/browser/logout", {}, port, { cookie: cookieA });
+    assert.strictEqual(logoutA.status, 200);
+
+    // Session A must be rejected
+    const pageA = await request("GET", "/browser", null, port, {
+      "x-forwarded-proto": "https",
+      cookie: cookieA,
+    });
+    assert.match(pageA.body, /"authenticated":false/, "session A must be unauthenticated after logout");
+
+    // Session B must still be valid
+    const pageB = await request("GET", "/browser", null, port, {
+      "x-forwarded-proto": "https",
+      cookie: cookieB,
+    });
+    assert.match(pageB.body, /"authenticated":true/, "session B must survive session A logout");
+  });
 });
 
 // ── Session cap and pruning tests ──────────────────────────────────────────

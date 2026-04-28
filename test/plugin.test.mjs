@@ -195,6 +195,47 @@ describe("fromPluginConfig", () => {
     assert.ok(cfg.POLL_FILLER_PHRASES.length > 0);
   });
 
+  it("rejects non-positive browserSessionMaxAgeSeconds", () => {
+    assert.throws(
+      () => fromPluginConfig({ browserSessionMaxAgeSeconds: 0 }),
+      /browserSessionMaxAgeSeconds must be a positive integer/,
+      "zero must be rejected"
+    );
+    assert.throws(
+      () => fromPluginConfig({ browserSessionMaxAgeSeconds: -1 }),
+      /browserSessionMaxAgeSeconds must be a positive integer/,
+      "negative must be rejected"
+    );
+    assert.throws(
+      () => fromPluginConfig({ browserSessionMaxAgeSeconds: 1.5 }),
+      /browserSessionMaxAgeSeconds must be a positive integer/,
+      "non-integer must be rejected"
+    );
+  });
+
+  it("rejects non-positive maxBrowserSessions", () => {
+    assert.throws(
+      () => fromPluginConfig({ maxBrowserSessions: 0 }),
+      /maxBrowserSessions must be a positive integer/,
+      "zero must be rejected"
+    );
+    assert.throws(
+      () => fromPluginConfig({ maxBrowserSessions: -5 }),
+      /maxBrowserSessions must be a positive integer/,
+      "negative must be rejected"
+    );
+  });
+
+  it("accepts valid positive integer browserSessionMaxAgeSeconds", () => {
+    const cfg = fromPluginConfig({ browserSessionMaxAgeSeconds: 3600 });
+    assert.strictEqual(cfg.BROWSER_SESSION_MAX_AGE_SECONDS, 3600);
+  });
+
+  it("accepts valid positive integer maxBrowserSessions", () => {
+    const cfg = fromPluginConfig({ maxBrowserSessions: 50 });
+    assert.strictEqual(cfg.MAX_BROWSER_SESSIONS, 50);
+  });
+
   it("maps every configSchema property to a non-undefined output key", () => {
     const pluginJson = JSON.parse(readFileSync(join(__dirname, "..", "openclaw.plugin.json"), "utf8"));
     const schemaProps = /** @type {Record<string, {type: string}>} */ (pluginJson.configSchema.properties);
