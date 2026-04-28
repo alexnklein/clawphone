@@ -230,6 +230,18 @@ describe("server integration", () => {
     assert.strictEqual(res.status, 401);
   });
 
+  it("POST /browser/chat with invalid percent-encoded cookie → 401 (not crash)", async () => {
+    const res = await postJson("/browser/chat", { text: "hello" }, port, { cookie: "clawphone_browser=%E0%A4%A" });
+    assert.strictEqual(res.status, 401);
+  });
+
+  it("GET /browser/ (trailing slash) → same HTML shell as /browser", async () => {
+    const res = await get("/browser/", port);
+    assert.strictEqual(res.status, 200);
+    assert.match(res.headers["content-type"], /text\/html/);
+    assert.match(res.body, /HouseCarl Voice/);
+  });
+
   it("GET /browser → security headers present", async () => {
     const res = await get("/browser", port);
     assert.strictEqual(res.status, 200);
