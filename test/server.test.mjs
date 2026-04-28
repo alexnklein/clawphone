@@ -237,6 +237,37 @@ describe("server integration", () => {
     assert.strictEqual(body.ok, true);
   });
 
+  it("POST /browser/login accepts same-origin when forwarded port is non-default", async () => {
+    const res = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port, {
+      "x-forwarded-host": "browser.test",
+      "x-forwarded-port": "8443",
+      origin: "https://browser.test:8443",
+    });
+    assert.strictEqual(res.status, 200, "non-default forwarded port must be included in expected origin");
+    const body = JSON.parse(res.body);
+    assert.strictEqual(body.ok, true);
+  });
+
+  it("POST /browser/login rejects origin when forwarded port mismatches", async () => {
+    const res = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port, {
+      "x-forwarded-host": "browser.test",
+      "x-forwarded-port": "8443",
+      origin: "https://browser.test:9999",
+    });
+    assert.strictEqual(res.status, 403, "mismatched forwarded port must be rejected");
+  });
+
+  it("POST /browser/login ignores forwarded port when host already contains a port", async () => {
+    const res = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port, {
+      "x-forwarded-host": "browser.test:8443",
+      "x-forwarded-port": "9999",
+      origin: "https://browser.test:8443",
+    });
+    assert.strictEqual(res.status, 200, "host-embedded port takes precedence over x-forwarded-port");
+    const body = JSON.parse(res.body);
+    assert.strictEqual(body.ok, true);
+  });
+
   it("POST /browser/chat without cookie → 401", async () => {
     const res = await postJsonBrowser("/browser/chat", { text: "hello" }, port);
     assert.strictEqual(res.status, 401);
@@ -440,6 +471,36 @@ describe("server integration", () => {
     assert.strictEqual(res.status, 200);
     assert.match(res.headers["content-type"], /text\/html/);
     assert.match(res.body, /HouseCarl Voice/);
+  });
+
+  it("GET /browser with stale cookie clears the dead cookie", async () => {
+    // Login, then log out to invalidate the session server-side
+    const login = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
+    const cookie = Array.isArray(login.headers["set-cookie"])
+      ? login.headers["set-cookie"][0]
+      : String(login.headers["set-cookie"] || "");
+
+    await postJsonBrowser("/browser/logout", {}, port, { cookie });
+
+    // GET /browser with the now-dead cookie — server should clear it
+    const page = await request("GET", "/browser", null, port, {
+      "x-forwarded-proto": "https",
+      cookie,
+    });
+    assert.strictEqual(page.status, 200);
+    assert.match(page.body, /"authenticated":false/, "page must render unauthenticated state");
+    assert.match(
+      String(page.headers["set-cookie"]),
+      /Max-Age=0/,
+      "stale cookie must be cleared on unauthenticated GET /browser"
+    );
+  });
+
+  it("GET /browser without any cookie does not set a clearing cookie", async () => {
+    const page = await getBrowser("/browser", port);
+    assert.strictEqual(page.status, 200);
+    // No cookie was sent, so no Set-Cookie header should be present
+    assert.strictEqual(page.headers["set-cookie"], undefined, "no Set-Cookie when no cookie sent");
   });
 
   it("POST /browser/login on forwarded HTTPS via trusted proxy → Secure cookie", async () => {

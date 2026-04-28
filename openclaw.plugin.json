@@ -179,6 +179,14 @@
       "label": "Browser Voice Access Code",
       "sensitive": true
     },
+    "browserSessionMaxAgeSeconds": {
+      "label": "Browser Session Max Age (seconds)",
+      "placeholder": "43200"
+    },
+    "maxBrowserSessions": {
+      "label": "Max Browser Sessions",
+      "placeholder": "1000"
+    },
     "trustedProxyIps": {
       "label": "Trusted Proxy IPs",
       "placeholder": "127.0.0.1,::1,::ffff:127.0.0.1"
