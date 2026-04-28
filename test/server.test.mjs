@@ -245,6 +245,37 @@ describe("server integration", () => {
     assert.match(body.error, /forbidden/i);
   });
 
+  it("POST /browser/chat with same-origin Origin header → 200", async () => {
+    const login = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
+    const cookie = Array.isArray(login.headers["set-cookie"])
+      ? login.headers["set-cookie"][0]
+      : String(login.headers["set-cookie"] || "");
+    // Simulate a real browser fetch: Origin matches the forwarded proto+host.
+    const res = await postJsonBrowser("/browser/chat", { text: "hello" }, port, {
+      cookie,
+      "x-forwarded-host": "browser.test",
+      origin: "https://browser.test",
+    });
+    assert.strictEqual(res.status, 200);
+    const body = JSON.parse(res.body);
+    assert.strictEqual(body.ok, true);
+  });
+
+  it("POST /browser/logout with same-origin Origin header → 200", async () => {
+    const login = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
+    const cookie = Array.isArray(login.headers["set-cookie"])
+      ? login.headers["set-cookie"][0]
+      : String(login.headers["set-cookie"] || "");
+    const res = await postJsonBrowser("/browser/logout", {}, port, {
+      cookie,
+      "x-forwarded-host": "browser.test",
+      origin: "https://browser.test",
+    });
+    assert.strictEqual(res.status, 200);
+    const body = JSON.parse(res.body);
+    assert.strictEqual(body.ok, true);
+  });
+
   it("POST /browser/chat with cross-origin Origin header → 403", async () => {
     const login = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port);
     const cookie = Array.isArray(login.headers["set-cookie"])

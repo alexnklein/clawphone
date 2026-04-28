@@ -52,13 +52,17 @@ describe("renderBrowserPage — client-side hardening", () => {
     assert.ok(stopIdx < authIdx, "stopRecognition must be called before clearing authenticated flag");
   });
 
-  it("401 handler calls stopRecognition", () => {
-    // The 401 branch inside sendMessage's catch
-    const handler401 = script.match(
+  it("401 handler in sendMessage calls stopRecognition", () => {
+    // Extract sendMessage's body first so we don't match the logout 401 handler
+    const sendBody = script.match(
+      /async function sendMessage\b([\s\S]*?)(?=\n\s*async function|\n\s*function\s+\w)/
+    );
+    assert.ok(sendBody, "sendMessage function must exist");
+    const handler401 = sendBody[1].match(
       /err\.status === 401\)\s*\{([\s\S]*?)\breturn;/
     );
     assert.ok(handler401, "401 error handler must exist in sendMessage");
-    assert.match(handler401[1], /stopRecognition\(\)/, "401 handler must call stopRecognition()");
+    assert.match(handler401[1], /stopRecognition\(\)/, "sendMessage 401 handler must call stopRecognition()");
   });
 
   // ── sendMessage auth guard ─────────────────────────────────────────
@@ -108,12 +112,32 @@ describe("renderBrowserPage — client-side hardening", () => {
     // The catch block must set an error status and return, not fall through
     assert.match(body, /catch\s*\(err\)/, "logout must catch errors with a named binding");
     assert.match(body, /Lock failed/, "catch block must surface the failure to the user");
-    // The return must be inside the catch block, before state.authenticated = false
-    const catchIdx = body.indexOf("catch (err)");
-    const returnIdx = body.indexOf("return;", catchIdx);
-    const authClearIdx = body.indexOf("state.authenticated = false");
-    assert.ok(returnIdx >= 0, "catch block must contain a return statement");
-    assert.ok(returnIdx < authClearIdx, "catch must return before state.authenticated is cleared");
+    // Anchor on "Lock failed" (non-401 error path) and verify its return comes
+    // before the success-path state.authenticated = false outside the catch.
+    const lockFailedIdx = body.indexOf("Lock failed");
+    assert.ok(lockFailedIdx >= 0, "catch block must surface the failure to the user");
+    const returnAfterLockFailed = body.indexOf("return;", lockFailedIdx);
+    assert.ok(returnAfterLockFailed >= 0, "non-401 catch path must contain a return statement");
+    const successAuthClear = body.indexOf("state.authenticated = false", returnAfterLockFailed);
+    assert.ok(successAuthClear > returnAfterLockFailed,
+      "non-401 catch must return before the success-path state.authenticated is cleared");
+  });
+
+  it("logout 401 handler treats expired session as successful lock", () => {
+    const logoutBody = script.match(
+      /async function logout\(\)\s*\{([\s\S]*?)(?=\n\s*async function|\n\s*function\s+\w)/
+    );
+    assert.ok(logoutBody, "logout function must exist");
+    const body = logoutBody[1];
+    // The catch block must handle 401 specially
+    const handler401 = body.match(
+      /err\.status === 401\)\s*\{([\s\S]*?)\breturn;/
+    );
+    assert.ok(handler401, "logout catch must have a 401 handler");
+    assert.match(handler401[1], /state\.authenticated\s*=\s*false/, "401 handler must clear authenticated");
+    assert.match(handler401[1], /state\.authTransition\s*=\s*false/, "401 handler must clear authTransition");
+    assert.match(handler401[1], /resetConversationUi\(\)/, "401 handler must reset conversation UI");
+    assert.match(handler401[1], /renderAuth\(\)/, "401 handler must call renderAuth");
   });
 
   it("cancelPendingChat is defined, aborts controller, and clears pending", () => {
@@ -190,12 +214,17 @@ describe("renderBrowserPage — client-side hardening", () => {
     assert.ok(loginStatusIdx > 0, "Locked status must target loginStatusEl");
   });
 
-  it("401 handler calls resetConversationUi", () => {
-    const handler401 = script.match(
+  it("401 handler in sendMessage calls resetConversationUi", () => {
+    // Scope to sendMessage so we don't accidentally match the logout 401 handler
+    const sendBody = script.match(
+      /async function sendMessage\b([\s\S]*?)(?=\n\s*async function|\n\s*function\s+\w)/
+    );
+    assert.ok(sendBody, "sendMessage function must exist");
+    const handler401 = sendBody[1].match(
       /err\.status === 401\)\s*\{([\s\S]*?)\breturn;/
     );
-    assert.ok(handler401);
-    assert.match(handler401[1], /resetConversationUi\(\)/, "401 handler must call resetConversationUi");
+    assert.ok(handler401, "401 error handler must exist in sendMessage");
+    assert.match(handler401[1], /resetConversationUi\(\)/, "sendMessage 401 handler must call resetConversationUi");
   });
 
   // ── HTML structure ─────────────────────────────────────────────────
@@ -464,6 +493,52 @@ describe("renderBrowserPage — executable logout behavior", () => {
     assert.strictEqual(afterLogin.authenticated, true, "must be re-authenticated after login");
     assert.strictEqual(afterLogin.pending, false,
       "state.pending must still be false after re-login — not wedged");
+  });
+
+  it("logout with 401 response treats session as locked (not error)", async () => {
+    const { els, handlers, getState } = bootScript({
+      fetchImpl: async () => ({
+        ok: false,
+        status: 401,
+        json: async () => ({ error: "Unauthorized." }),
+      }),
+    });
+
+    const logoutFn = handlers["logoutButton:click"];
+    assert.ok(logoutFn, "logout click handler must be registered");
+
+    await logoutFn();
+
+    const state = getState();
+    assert.strictEqual(state.authenticated, false,
+      "session must be de-authenticated when /logout returns 401");
+    assert.ok(els.appCard.classList.contains("hidden"),
+      "app card must be hidden after 401 logout");
+    assert.ok(!els.loginCard.classList.contains("hidden"),
+      "login card must be visible after 401 logout");
+    assert.match(els.loginStatus.textContent, /[Ll]ocked/,
+      "login status must show locked confirmation, not an error");
+    assert.doesNotMatch(els.status.textContent, /[Ll]ock failed/i,
+      "must not show lock-failed error for 401");
+  });
+
+  it("logout with 500 response keeps session authenticated (error path)", async () => {
+    const { els, handlers, getState } = bootScript({
+      fetchImpl: async () => ({
+        ok: false,
+        status: 500,
+        json: async () => ({ error: "Server error." }),
+      }),
+    });
+
+    const logoutFn = handlers["logoutButton:click"];
+    await logoutFn();
+
+    const state = getState();
+    assert.strictEqual(state.authenticated, true,
+      "session must stay authenticated when /logout returns 500");
+    assert.match(els.status.textContent, /[Ll]ock failed/,
+      "status must show lock failure message for 500");
   });
 
   it("401 on chat aborts active SpeechRecognition", async () => {
