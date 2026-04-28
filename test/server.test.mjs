@@ -1609,3 +1609,125 @@ describe("browser chat downstream caller-ID verification", () => {
     );
   });
 });
+
+// ── Backend session-key isolation regression test ────────────────────────────
+// Calls openclawReply() directly (not through _openclawReplyOverride) to verify
+// that two distinct browser fromNumber values produce different backend session
+// keys inside the plugin path's session-key derivation logic.
+describe("openclawReply browser session-key isolation", () => {
+  it("two browser sessions get distinct backend session keys (no shared key)", async () => {
+    const { openclawReply } = await import("../lib/agent.mjs");
+
+    /** @type {string[]} */
+    const seenSessionKeys = [];
+
+    const fakeDeps = {
+      resolveStorePath: () => "/tmp/clawphone-test-store.json",
+      resolveAgentDir: () => "/tmp/clawphone-test-agent",
+      resolveAgentWorkspaceDir: () => "/tmp/clawphone-test-workspace",
+      ensureAgentWorkspace: async () => {},
+      loadSessionStore: () => ({}),
+      saveSessionStore: async () => {},
+      resolveSessionFilePath: () => "/tmp/clawphone-test-session.json",
+      resolveAgentTimeoutMs: () => 1000,
+      runEmbeddedPiAgent: async (/** @type {{ sessionKey: string }} */ opts) => {
+        seenSessionKeys.push(opts.sessionKey);
+        return { payloads: [{ text: "[test stub]" }] };
+      },
+    };
+
+    const fakeApi = {
+      config: {
+        session: {},
+        plugins: { entries: { clawphone: { config: {} } } },
+      },
+    };
+
+    await openclawReply({
+      userText: "hello from session A",
+      mode: "browser",
+      fromNumber: "browser:sess-aaa",
+      callerInfo: { tier: "household", name: "Browser" },
+      _api: fakeApi,
+      _coreDeps: fakeDeps,
+    });
+
+    await openclawReply({
+      userText: "hello from session B",
+      mode: "browser",
+      fromNumber: "browser:sess-bbb",
+      callerInfo: { tier: "household", name: "Browser" },
+      _api: fakeApi,
+      _coreDeps: fakeDeps,
+    });
+
+    assert.strictEqual(seenSessionKeys.length, 2, "two calls must produce two session keys");
+    assert.notStrictEqual(
+      seenSessionKeys[0],
+      seenSessionKeys[1],
+      "distinct browser fromNumbers must produce distinct backend session keys"
+    );
+    // Verify the session keys match the fromNumber values directly
+    assert.strictEqual(seenSessionKeys[0], "browser:sess-aaa");
+    assert.strictEqual(seenSessionKeys[1], "browser:sess-bbb");
+  });
+
+  it("browser sessions share a session key when sharedSessionKey is configured", async () => {
+    const { openclawReply } = await import("../lib/agent.mjs");
+
+    /** @type {string[]} */
+    const seenSessionKeys = [];
+
+    const fakeDeps = {
+      resolveStorePath: () => "/tmp/clawphone-test-store.json",
+      resolveAgentDir: () => "/tmp/clawphone-test-agent",
+      resolveAgentWorkspaceDir: () => "/tmp/clawphone-test-workspace",
+      ensureAgentWorkspace: async () => {},
+      loadSessionStore: () => ({}),
+      saveSessionStore: async () => {},
+      resolveSessionFilePath: () => "/tmp/clawphone-test-session.json",
+      resolveAgentTimeoutMs: () => 1000,
+      runEmbeddedPiAgent: async (/** @type {{ sessionKey: string }} */ opts) => {
+        seenSessionKeys.push(opts.sessionKey);
+        return { payloads: [{ text: "[test stub]" }] };
+      },
+    };
+
+    const fakeApi = {
+      config: {
+        session: {},
+        plugins: {
+          entries: {
+            clawphone: { config: { sharedSessionKey: "household-shared" } },
+          },
+        },
+      },
+    };
+
+    await openclawReply({
+      userText: "hello from session A",
+      mode: "browser",
+      fromNumber: "browser:sess-aaa",
+      callerInfo: { tier: "household", name: "Browser" },
+      _api: fakeApi,
+      _coreDeps: fakeDeps,
+    });
+
+    await openclawReply({
+      userText: "hello from session B",
+      mode: "browser",
+      fromNumber: "browser:sess-bbb",
+      callerInfo: { tier: "household", name: "Browser" },
+      _api: fakeApi,
+      _coreDeps: fakeDeps,
+    });
+
+    assert.strictEqual(seenSessionKeys.length, 2, "two calls must produce two session keys");
+    assert.strictEqual(
+      seenSessionKeys[0],
+      seenSessionKeys[1],
+      "browser sessions must share session key when sharedSessionKey is configured"
+    );
+    assert.strictEqual(seenSessionKeys[0], "household-shared");
+  });
+});
