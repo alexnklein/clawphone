@@ -181,6 +181,25 @@ describe("server integration", () => {
     assert.match(String(res.headers["set-cookie"]), /clawphone_browser=/);
   });
 
+  it("POST /browser/login with cross-origin Origin header → 403", async () => {
+    const res = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port, {
+      origin: "https://evil.example.com",
+    });
+    assert.strictEqual(res.status, 403, "cross-origin login must be rejected");
+    const body = JSON.parse(res.body);
+    assert.match(body.error, /forbidden/i);
+  });
+
+  it("POST /browser/login with same-origin Origin header → 200", async () => {
+    const res = await postJsonBrowser("/browser/login", { code: "let-me-in" }, port, {
+      "x-forwarded-host": "browser.test",
+      origin: "https://browser.test",
+    });
+    assert.strictEqual(res.status, 200);
+    const body = JSON.parse(res.body);
+    assert.strictEqual(body.ok, true);
+  });
+
   it("POST /browser/chat without cookie → 401", async () => {
     const res = await postJsonBrowser("/browser/chat", { text: "hello" }, port);
     assert.strictEqual(res.status, 401);
@@ -211,11 +230,16 @@ describe("server integration", () => {
     assert.match(body.error, /message text is required/i);
   });
 
-  it("POST /browser/logout without session → 401", async () => {
-    const res = await postJsonBrowser("/browser/logout", {}, port);
-    assert.strictEqual(res.status, 401, "logout without session must return 401");
+  it("POST /browser/logout without session → 401 + clears stale cookie", async () => {
+    // Send a bogus cookie — server should still clear it on 401
+    const res = await postJsonBrowser("/browser/logout", {}, port, {
+      cookie: "clawphone_browser=stale-bogus-session",
+    });
+    assert.strictEqual(res.status, 401, "logout without valid session must return 401");
     const body = JSON.parse(res.body);
     assert.match(body.error, /unauthorized/i);
+    // Cookie must be cleared so the browser stops sending the dead value
+    assert.match(String(res.headers["set-cookie"]), /Max-Age=0/, "stale cookie must be cleared on 401 logout");
   });
 
   it("POST /browser/logout with valid session → clears session cookie", async () => {

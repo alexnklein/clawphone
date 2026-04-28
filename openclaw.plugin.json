@@ -103,6 +103,11 @@
         "default": "",
         "description": "Access code required to unlock the browser voice UI."
       },
+      "trustedProxyIps": {
+        "type": "string",
+        "default": "127.0.0.1,::1,::ffff:127.0.0.1",
+        "description": "Comma-separated IPs treated as trusted reverse proxies. X-Forwarded-* headers are only honoured from these addresses."
+      },
       "callerProfiles": {
         "type": "object",
         "default": {},
@@ -163,6 +168,10 @@
     "browserAccessCode": {
       "label": "Browser Voice Access Code",
       "sensitive": true
+    },
+    "trustedProxyIps": {
+      "label": "Trusted Proxy IPs",
+      "placeholder": "127.0.0.1,::1,::ffff:127.0.0.1"
     },
     "callerProfiles": {
       "label": "Caller Profiles (tiered access)",
