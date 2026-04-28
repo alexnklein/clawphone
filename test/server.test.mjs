@@ -276,6 +276,27 @@ describe("server integration", () => {
     assert.strictEqual(chatOld.status, 401, "previous session must be revoked after re-login");
   });
 
+  it("POST /browser/login with wrong code does not revoke existing session", async () => {
+    // Login successfully first
+    const login = await postJson("/browser/login", { code: "let-me-in" }, port);
+    assert.strictEqual(login.status, 200);
+    const cookie = Array.isArray(login.headers["set-cookie"])
+      ? login.headers["set-cookie"][0]
+      : String(login.headers["set-cookie"] || "");
+
+    // Verify the session works
+    const chatBefore = await postJson("/browser/chat", { text: "hi" }, port, { cookie });
+    assert.strictEqual(chatBefore.status, 200);
+
+    // Attempt re-login with wrong code (sends the existing cookie along)
+    const badLogin = await postJson("/browser/login", { code: "wrong" }, port, { cookie });
+    assert.strictEqual(badLogin.status, 401);
+
+    // Original session must still be valid
+    const chatAfter = await postJson("/browser/chat", { text: "hi" }, port, { cookie });
+    assert.strictEqual(chatAfter.status, 200, "existing session must survive a failed re-login attempt");
+  });
+
   it("GET /browser/ (trailing slash) → same HTML shell as /browser", async () => {
     const res = await get("/browser/", port);
     assert.strictEqual(res.status, 200);
@@ -310,6 +331,12 @@ describe("server integration", () => {
     assert.match(cookie, /SameSite=Lax/, "cookie must be SameSite=Lax");
     assert.match(cookie, /Path=\/browser/, "cookie must be scoped to /browser");
     assert.doesNotMatch(cookie, /Secure/, "cookie must NOT include Secure on plain HTTP");
+  });
+
+  it("GET /browser → client state includes authEpoch for in-flight cancel", async () => {
+    const res = await get("/browser", port);
+    assert.strictEqual(res.status, 200);
+    assert.match(res.body, /authEpoch/, "client state must include authEpoch to guard in-flight requests across logout");
   });
 
   it("GET /browser → login error feedback element present in HTML", async () => {
