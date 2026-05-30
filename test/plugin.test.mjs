@@ -78,6 +78,9 @@ describe("fromPluginConfig", () => {
       openclawSessionId: "my-session",
       openclawAgentId: "my-agent",
       openclawMaxConcurrent: 5,
+      browserEnabled: true,
+      browserPath: "voice-browser/",
+      browserAccessCode: "secret",
     });
 
     assert.strictEqual(cfg.PORT, 9000);
@@ -91,6 +94,9 @@ describe("fromPluginConfig", () => {
     assert.strictEqual(cfg.OPENCLAW_PHONE_SESSION_ID, "my-session");
     assert.strictEqual(cfg.OPENCLAW_AGENT_ID, "my-agent");
     assert.strictEqual(cfg.OPENCLAW_MAX_CONCURRENT, 5);
+    assert.strictEqual(cfg.BROWSER_ENABLED, true);
+    assert.strictEqual(cfg.BROWSER_PATH, "/voice-browser");
+    assert.strictEqual(cfg.BROWSER_ACCESS_CODE, "secret");
   });
 
   it("maps rateLimitMax and rateLimitWindowMs", () => {
@@ -113,6 +119,66 @@ describe("fromPluginConfig", () => {
     assert.strictEqual(cfg.OPENCLAW_MAX_CONCURRENT, 10);
     assert.strictEqual(cfg.RATE_LIMIT_MAX, 20);
     assert.strictEqual(cfg.RATE_LIMIT_WINDOW_MS, 60000);
+    assert.strictEqual(cfg.BROWSER_ENABLED, false);
+    assert.strictEqual(cfg.BROWSER_PATH, "/browser");
+    assert.strictEqual(cfg.BROWSER_ACCESS_CODE, "");
+  });
+
+  it("explicit empty browserAccessCode overrides env var", () => {
+    const cfg = fromPluginConfig({ browserAccessCode: "" });
+    assert.strictEqual(cfg.BROWSER_ACCESS_CODE, "", "explicit empty string must not fall back to env var");
+  });
+
+  it("omitted browserAccessCode falls through to env var default", () => {
+    const cfg = fromPluginConfig({});
+    // When env var is unset (as in this test process), default is ""
+    assert.strictEqual(typeof cfg.BROWSER_ACCESS_CODE, "string");
+  });
+
+  it("rejects browserPath that shadows a reserved route", () => {
+    for (const reserved of ["/health", "/voice", "/speech", "/speech-wait", "/sms", "/status", "/healthz"]) {
+      assert.throws(
+        () => fromPluginConfig({ browserPath: reserved }),
+        /conflicts with a reserved server route/,
+        `browserPath="${reserved}" must be rejected`
+      );
+    }
+  });
+
+  it("rejects browserPath with invalid characters", () => {
+    assert.throws(
+      () => fromPluginConfig({ browserPath: "/bad path" }),
+      /Invalid browserPath/,
+      "spaces must be rejected"
+    );
+    assert.throws(
+      () => fromPluginConfig({ browserPath: "/bad<path" }),
+      /Invalid browserPath/,
+      "angle brackets must be rejected"
+    );
+  });
+
+  it("accepts valid custom browserPath", () => {
+    const cfg = fromPluginConfig({ browserPath: "/my-voice" });
+    assert.strictEqual(cfg.BROWSER_PATH, "/my-voice");
+  });
+
+  it("collapses duplicate slashes in browserPath", () => {
+    const cfg = fromPluginConfig({ browserPath: "//my-voice" });
+    assert.strictEqual(cfg.BROWSER_PATH, "/my-voice");
+  });
+
+  it("collapses internal duplicate slashes in browserPath", () => {
+    const cfg = fromPluginConfig({ browserPath: "/browser//chat" });
+    assert.strictEqual(cfg.BROWSER_PATH, "/browser/chat");
+  });
+
+  it("rejects browserPath that collapses to a reserved route", () => {
+    assert.throws(
+      () => fromPluginConfig({ browserPath: "//voice//" }),
+      /conflicts with a reserved server route/,
+      "//voice// should collapse to /voice and be rejected"
+    );
   });
 
   it("includes static constants", () => {
@@ -120,12 +186,54 @@ describe("fromPluginConfig", () => {
     assert.strictEqual(cfg.TWILIO_VOICE, "Google.en-US-Chirp3-HD-Charon");
     assert.strictEqual(cfg.MAX_SAYABLE_LENGTH, 600);
     assert.strictEqual(cfg.OPENCLAW_TIMEOUT_SECONDS, 120);
+    assert.strictEqual(cfg.BROWSER_SESSION_MAX_AGE_SECONDS, 43200);
     assert.ok(Array.isArray(cfg.THINKING_PHRASES));
     assert.ok(cfg.THINKING_PHRASES.length > 0);
     assert.strictEqual(typeof cfg.getRandomThinkingPhrase, "function");
     assert.ok(cfg.THINKING_PHRASES.includes(cfg.getRandomThinkingPhrase()));
     assert.ok(Array.isArray(cfg.POLL_FILLER_PHRASES));
     assert.ok(cfg.POLL_FILLER_PHRASES.length > 0);
+  });
+
+  it("rejects non-positive browserSessionMaxAgeSeconds", () => {
+    assert.throws(
+      () => fromPluginConfig({ browserSessionMaxAgeSeconds: 0 }),
+      /browserSessionMaxAgeSeconds must be a positive integer/,
+      "zero must be rejected"
+    );
+    assert.throws(
+      () => fromPluginConfig({ browserSessionMaxAgeSeconds: -1 }),
+      /browserSessionMaxAgeSeconds must be a positive integer/,
+      "negative must be rejected"
+    );
+    assert.throws(
+      () => fromPluginConfig({ browserSessionMaxAgeSeconds: 1.5 }),
+      /browserSessionMaxAgeSeconds must be a positive integer/,
+      "non-integer must be rejected"
+    );
+  });
+
+  it("rejects non-positive maxBrowserSessions", () => {
+    assert.throws(
+      () => fromPluginConfig({ maxBrowserSessions: 0 }),
+      /maxBrowserSessions must be a positive integer/,
+      "zero must be rejected"
+    );
+    assert.throws(
+      () => fromPluginConfig({ maxBrowserSessions: -5 }),
+      /maxBrowserSessions must be a positive integer/,
+      "negative must be rejected"
+    );
+  });
+
+  it("accepts valid positive integer browserSessionMaxAgeSeconds", () => {
+    const cfg = fromPluginConfig({ browserSessionMaxAgeSeconds: 3600 });
+    assert.strictEqual(cfg.BROWSER_SESSION_MAX_AGE_SECONDS, 3600);
+  });
+
+  it("accepts valid positive integer maxBrowserSessions", () => {
+    const cfg = fromPluginConfig({ maxBrowserSessions: 50 });
+    assert.strictEqual(cfg.MAX_BROWSER_SESSIONS, 50);
   });
 
   it("maps every configSchema property to a non-undefined output key", () => {
@@ -140,6 +248,7 @@ describe("fromPluginConfig", () => {
       const type = schemaProps[key].type;
       if (type === "number") sentinelInput[key] = 90000 + i;
       else if (type === "array") sentinelInput[key] = [`sentinel-${key}`];
+      else if (type === "boolean") sentinelInput[key] = i % 2 === 0;
       else sentinelInput[key] = `sentinel-${key}`;
     }
 
@@ -152,6 +261,8 @@ describe("fromPluginConfig", () => {
       let expected;
       if (type === "number") expected = 90000 + i;
       else if (type === "array") expected = [`sentinel-${key}`];
+      else if (type === "boolean") expected = i % 2 === 0;
+      else if (key === "browserPath") expected = `/sentinel-${key}`;
       else expected = `sentinel-${key}`;
 
       assert.ok(

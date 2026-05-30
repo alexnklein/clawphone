@@ -88,6 +88,36 @@
         "default": "",
         "description": "When set, SMS and voice use this session key instead of creating mode-scoped keys. Set to the Telegram session key (e.g. agent:main:main) for cross-channel context sharing."
       },
+      "browserEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable the authenticated browser voice surface."
+      },
+      "browserPath": {
+        "type": "string",
+        "default": "/browser",
+        "description": "HTTP path that serves the browser voice UI."
+      },
+      "browserAccessCode": {
+        "type": "string",
+        "default": "",
+        "description": "Access code required to unlock the browser voice UI."
+      },
+      "browserSessionMaxAgeSeconds": {
+        "type": "number",
+        "default": 43200,
+        "description": "Maximum idle time (seconds) before a browser session expires. Default: 43200 (12 h)."
+      },
+      "maxBrowserSessions": {
+        "type": "number",
+        "default": 1000,
+        "description": "Maximum concurrent browser sessions before new logins are rejected. Default: 1000."
+      },
+      "trustedProxyIps": {
+        "type": "string",
+        "default": "127.0.0.1,::1,::ffff:127.0.0.1",
+        "description": "Comma-separated IPs treated as trusted reverse proxies. X-Forwarded-* headers are only honoured from these addresses."
+      },
       "callerProfiles": {
         "type": "object",
         "default": {},
@@ -137,6 +167,29 @@
     "sharedSessionKey": {
       "label": "Shared Session Key (cross-channel)",
       "placeholder": "agent:main:main"
+    },
+    "browserEnabled": {
+      "label": "Enable Browser Voice"
+    },
+    "browserPath": {
+      "label": "Browser Voice Path",
+      "placeholder": "/browser"
+    },
+    "browserAccessCode": {
+      "label": "Browser Voice Access Code",
+      "sensitive": true
+    },
+    "browserSessionMaxAgeSeconds": {
+      "label": "Browser Session Max Age (seconds)",
+      "placeholder": "43200"
+    },
+    "maxBrowserSessions": {
+      "label": "Max Browser Sessions",
+      "placeholder": "1000"
+    },
+    "trustedProxyIps": {
+      "label": "Trusted Proxy IPs",
+      "placeholder": "127.0.0.1,::1,::ffff:127.0.0.1"
     },
     "callerProfiles": {
       "label": "Caller Profiles (tiered access)",
